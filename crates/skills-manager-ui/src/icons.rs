@@ -15,6 +15,7 @@ pub const UPLOAD: &str = "\u{E19E}";
 pub const DATABASE: &str = "\u{E0AD}";
 pub const FILE: &str = "\u{E0CC}";
 pub const EYE: &str = "\u{E0BA}";
+pub const EYE_OFF: &str = "\u{E0BB}";
 
 pub fn icon(codepoint: &'static str, size: u32) -> Text<'static> {
     Text::new(codepoint)

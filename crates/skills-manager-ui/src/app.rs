@@ -539,27 +539,40 @@ impl App {
                 .sort_rank()
                 .cmp(&right.scope.sort_rank())
                 .then_with(|| health_rank(left.health).cmp(&health_rank(right.health)))
-                .then_with(|| left.display_name.to_lowercase().cmp(&right.display_name.to_lowercase())),
+                .then_with(|| {
+                    left.display_name
+                        .to_lowercase()
+                        .cmp(&right.display_name.to_lowercase())
+                }),
             SortKey::Name => left
                 .display_name
                 .to_lowercase()
                 .cmp(&right.display_name.to_lowercase()),
             SortKey::Health => health_rank(left.health)
                 .cmp(&health_rank(right.health))
-                .then_with(|| left.display_name.to_lowercase().cmp(&right.display_name.to_lowercase())),
+                .then_with(|| {
+                    left.display_name
+                        .to_lowercase()
+                        .cmp(&right.display_name.to_lowercase())
+                }),
             SortKey::Scope => left
                 .scope
                 .sort_rank()
                 .cmp(&right.scope.sort_rank())
-                .then_with(|| left.display_name.to_lowercase().cmp(&right.display_name.to_lowercase())),
+                .then_with(|| {
+                    left.display_name
+                        .to_lowercase()
+                        .cmp(&right.display_name.to_lowercase())
+                }),
             SortKey::Resources => right
                 .resource_bytes
                 .cmp(&left.resource_bytes)
                 .then_with(|| right.resource_count.cmp(&left.resource_count)),
-            SortKey::Installed => right
-                .installed_at
-                .cmp(&left.installed_at)
-                .then_with(|| left.display_name.to_lowercase().cmp(&right.display_name.to_lowercase())),
+            SortKey::Installed => right.installed_at.cmp(&left.installed_at).then_with(|| {
+                left.display_name
+                    .to_lowercase()
+                    .cmp(&right.display_name.to_lowercase())
+            }),
         });
     }
 }
