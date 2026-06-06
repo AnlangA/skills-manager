@@ -84,6 +84,47 @@ impl GitHubTreeSource {
     pub fn path_filter(&self) -> Option<&str> {
         self.subdir.as_deref()
     }
+
+    pub fn tree_url_with_path(&self, path: &str) -> String {
+        let mut parts = Vec::new();
+        if let Some(subdir) = self
+            .subdir
+            .as_deref()
+            .map(clean_tree_path)
+            .filter(|subdir| !subdir.is_empty())
+        {
+            parts.push(subdir);
+        }
+
+        let path = clean_tree_path(path);
+        if !path.is_empty() {
+            parts.push(path);
+        }
+
+        if parts.is_empty() {
+            format!(
+                "https://github.com/{}/{}/tree/{}",
+                self.owner, self.repo, self.reference
+            )
+        } else {
+            format!(
+                "https://github.com/{}/{}/tree/{}/{}",
+                self.owner,
+                self.repo,
+                self.reference,
+                parts.join("/")
+            )
+        }
+    }
+}
+
+pub fn catalog_git_install_url(url: &str, path: Option<&str>) -> Result<String> {
+    let source = GitHubTreeSource::parse(url)?;
+    let Some(path) = path.map(str::trim).filter(|path| !path.is_empty()) else {
+        return Ok(source.original_url);
+    };
+
+    Ok(source.tree_url_with_path(path))
 }
 
 fn normalize_github_input(input: &str) -> String {
@@ -95,6 +136,15 @@ fn normalize_github_input(input: &str) -> String {
     } else {
         format!("https://github.com/{trimmed}")
     }
+}
+
+fn clean_tree_path(path: &str) -> String {
+    path.trim()
+        .trim_matches('/')
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 #[cfg(test)]
@@ -121,5 +171,50 @@ mod tests {
         assert_eq!(parsed.repo, "skills");
         assert_eq!(parsed.reference, "main");
         assert_eq!(parsed.subdir, None);
+    }
+
+    #[test]
+    fn builds_catalog_install_url_for_plain_repo_path() {
+        let url =
+            catalog_git_install_url("https://github.com/acme/skills", Some("demo/skill")).unwrap();
+
+        assert_eq!(url, "https://github.com/acme/skills/tree/main/demo/skill");
+    }
+
+    #[test]
+    fn builds_catalog_install_url_preserving_branch() {
+        let url = catalog_git_install_url("https://github.com/acme/skills/tree/dev", Some("demo"))
+            .unwrap();
+
+        assert_eq!(url, "https://github.com/acme/skills/tree/dev/demo");
+    }
+
+    #[test]
+    fn builds_catalog_install_url_preserving_base_subdir() {
+        let url = catalog_git_install_url(
+            "https://github.com/acme/skills/tree/dev/catalog",
+            Some("/demo//skill/"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            url,
+            "https://github.com/acme/skills/tree/dev/catalog/demo/skill"
+        );
+    }
+
+    #[test]
+    fn catalog_install_url_without_path_preserves_normalized_source() {
+        let url = catalog_git_install_url("acme/skills", None).unwrap();
+
+        assert_eq!(url, "https://github.com/acme/skills");
+    }
+
+    #[test]
+    fn catalog_install_url_rejects_unsupported_hosts() {
+        let error =
+            catalog_git_install_url("https://example.com/acme/skills", Some("demo")).unwrap_err();
+
+        assert!(matches!(error, SkillsManagerError::UnsupportedUrl));
     }
 }

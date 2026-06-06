@@ -53,6 +53,12 @@ pub struct InstallResult {
 }
 
 #[derive(Debug, Clone)]
+struct PlannedDestination {
+    path: PathBuf,
+    conflict: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct Installer {
     paths: ManagerPaths,
 }
@@ -74,25 +80,22 @@ impl Installer {
 
         for candidate in discover_skill_candidates(source_root)? {
             let preferred_name = preferred_folder_name(&candidate);
-            let folder_name = unique_claim_name(&preferred_name, &mut claimed);
-            let planned_destination = destination_root.join(folder_name);
-            let conflict = planned_destination.exists();
-            let destination = if conflict && conflict_policy == ConflictPolicy::Rename {
-                let folder_name = unique_folder_name(&destination_root, &preferred_name, &claimed);
-                destination_root.join(folder_name)
-            } else {
-                planned_destination
-            };
+            let destination = plan_destination(
+                &destination_root,
+                &preferred_name,
+                &mut claimed,
+                conflict_policy,
+            );
 
             candidates.push(InstallCandidate {
                 source_root: candidate.root_dir,
-                destination_root: destination,
+                destination_root: destination.path,
                 frontmatter: candidate.frontmatter,
                 diagnostics: candidate.diagnostics,
                 health: candidate.health,
                 resource_count: candidate.resource_count,
                 resource_bytes: candidate.resource_bytes,
-                conflict,
+                conflict: destination.conflict,
             });
         }
 
@@ -119,33 +122,30 @@ impl Installer {
 
         for candidate in candidates {
             let preferred_name = preferred_folder_name(&candidate);
-            let destination =
-                destination_root.join(unique_claim_name(&preferred_name, &mut claimed));
+            let destination = plan_destination(
+                &destination_root,
+                &preferred_name,
+                &mut claimed,
+                request.conflict_policy,
+            );
 
-            if destination.exists() {
+            if destination.conflict {
                 match request.conflict_policy {
                     ConflictPolicy::Block => {
-                        return Err(SkillsManagerError::DestinationExists(destination));
+                        return Err(SkillsManagerError::DestinationExists(destination.path));
                     }
                     ConflictPolicy::Rename => {}
                     ConflictPolicy::Replace => {
-                        let backup = backup_path(&destination);
-                        fs::rename(&destination, &backup)?;
+                        let backup = backup_path(&destination.path);
+                        fs::rename(&destination.path, &backup)?;
                         backups.push(backup);
                     }
                 }
             }
 
-            let final_destination = if request.conflict_policy == ConflictPolicy::Rename {
-                let folder_name = unique_folder_name(&destination_root, &preferred_name, &claimed);
-                destination_root.join(folder_name)
-            } else {
-                destination
-            };
-
-            copy_skill_folder(&candidate.root_dir, &final_destination)?;
-            config.record_install(&final_destination, request.source_url.clone());
-            installed.push(final_destination);
+            copy_skill_folder(&candidate.root_dir, &destination.path)?;
+            config.record_install(&destination.path, request.source_url.clone());
+            installed.push(destination.path);
         }
 
         config.save(&self.paths)?;
@@ -187,6 +187,28 @@ impl Installer {
                 .ok_or_else(|| SkillsManagerError::UnknownSkillScope(PathBuf::from("project"))),
         }
     }
+}
+
+fn plan_destination(
+    destination_root: &Path,
+    preferred_name: &str,
+    claimed: &mut HashMap<String, ()>,
+    conflict_policy: ConflictPolicy,
+) -> PlannedDestination {
+    let folder_name = unique_claim_name(preferred_name, claimed);
+    let path = destination_root.join(&folder_name);
+    let conflict = path.exists();
+
+    if conflict && conflict_policy == ConflictPolicy::Rename {
+        let renamed = unique_folder_name(destination_root, preferred_name, claimed);
+        claimed.insert(renamed.clone(), ());
+        return PlannedDestination {
+            path: destination_root.join(renamed),
+            conflict,
+        };
+    }
+
+    PlannedDestination { path, conflict }
 }
 
 fn copy_skill_folder(source: &Path, destination: &Path) -> Result<()> {
@@ -368,5 +390,154 @@ mod tests {
         assert!(preview.candidates[0].conflict);
         assert!(preview.candidates[0].destination_root.ends_with("demo-2"));
         assert!(!preview.candidates[0].diagnostics.is_empty());
+    }
+
+    #[test]
+    fn rename_policy_does_not_rename_without_conflict() {
+        let dir = tempdir().unwrap();
+        let source = create_skill(dir.path(), "source/demo", "demo");
+        let paths = test_paths(dir.path(), None);
+        let installer = Installer::new(paths);
+
+        let preview = installer
+            .preview(&source, SkillScope::User, ConflictPolicy::Rename)
+            .unwrap();
+        assert_eq!(preview.candidates.len(), 1);
+        assert!(!preview.candidates[0].conflict);
+        assert!(preview.candidates[0].destination_root.ends_with("demo"));
+
+        let result = installer
+            .install(InstallRequest {
+                source_root: source,
+                source_url: None,
+                scope: SkillScope::User,
+                conflict_policy: ConflictPolicy::Rename,
+            })
+            .unwrap();
+
+        assert_eq!(result.installed.len(), 1);
+        assert!(result.installed[0].ends_with("demo"));
+        assert!(!result.installed[0].ends_with("demo-2"));
+        assert!(result.installed[0].join("SKILL.md").exists());
+    }
+
+    #[test]
+    fn rename_policy_preview_matches_install_with_conflict() {
+        let dir = tempdir().unwrap();
+        let source = create_skill(dir.path(), "source/demo", "demo");
+        let existing = dir.path().join("home/.agents/skills/demo");
+        fs::create_dir_all(&existing).unwrap();
+        fs::write(
+            existing.join("SKILL.md"),
+            "---\nname: demo\ndescription: Existing skill\n---\n",
+        )
+        .unwrap();
+
+        let paths = test_paths(dir.path(), None);
+        let installer = Installer::new(paths);
+        let preview = installer
+            .preview(&source, SkillScope::User, ConflictPolicy::Rename)
+            .unwrap();
+        let preview_destination = preview.candidates[0].destination_root.clone();
+
+        let result = installer
+            .install(InstallRequest {
+                source_root: source,
+                source_url: None,
+                scope: SkillScope::User,
+                conflict_policy: ConflictPolicy::Rename,
+            })
+            .unwrap();
+
+        assert_eq!(result.installed, vec![preview_destination.clone()]);
+        assert!(preview_destination.ends_with("demo-2"));
+        assert!(preview_destination.join("SKILL.md").exists());
+        assert!(existing.join("SKILL.md").exists());
+    }
+
+    #[test]
+    fn rename_policy_keeps_duplicate_candidates_deterministic() {
+        let dir = tempdir().unwrap();
+        let source_root = dir.path().join("source");
+        create_skill(dir.path(), "source/first", "demo");
+        create_skill(dir.path(), "source/second", "demo");
+        let existing = dir.path().join("home/.agents/skills/demo");
+        fs::create_dir_all(&existing).unwrap();
+        fs::write(
+            existing.join("SKILL.md"),
+            "---\nname: demo\ndescription: Existing skill\n---\n",
+        )
+        .unwrap();
+
+        let paths = test_paths(dir.path(), None);
+        let installer = Installer::new(paths);
+        let preview = installer
+            .preview(&source_root, SkillScope::User, ConflictPolicy::Rename)
+            .unwrap();
+        let destinations = preview
+            .candidates
+            .iter()
+            .map(|candidate| {
+                candidate
+                    .destination_root
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(destinations, vec!["demo-2", "demo-3"]);
+    }
+
+    #[test]
+    fn replace_policy_preserves_backup_behavior() {
+        let dir = tempdir().unwrap();
+        let source = create_skill(dir.path(), "source/demo", "demo");
+        let existing = dir.path().join("home/.agents/skills/demo");
+        fs::create_dir_all(&existing).unwrap();
+        fs::write(
+            existing.join("SKILL.md"),
+            "---\nname: demo\ndescription: Existing skill\n---\n",
+        )
+        .unwrap();
+        fs::write(existing.join("old.txt"), "old").unwrap();
+
+        let paths = test_paths(dir.path(), None);
+        let installer = Installer::new(paths);
+        let result = installer
+            .install(InstallRequest {
+                source_root: source,
+                source_url: Some("fixture".to_string()),
+                scope: SkillScope::User,
+                conflict_policy: ConflictPolicy::Replace,
+            })
+            .unwrap();
+
+        assert_eq!(result.installed.len(), 1);
+        assert_eq!(result.backups.len(), 1);
+        assert!(result.installed[0].ends_with("demo"));
+        assert!(result.installed[0].join("SKILL.md").exists());
+        assert!(result.backups[0].join("old.txt").exists());
+    }
+
+    fn create_skill(root: &Path, relative: &str, name: &str) -> PathBuf {
+        let source = root.join(relative);
+        fs::create_dir_all(&source).unwrap();
+        fs::write(
+            source.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: Demo skill\n---\n"),
+        )
+        .unwrap();
+        source.parent().unwrap().to_path_buf()
+    }
+
+    fn test_paths(root: &Path, project: Option<&Path>) -> ManagerPaths {
+        ManagerPaths::with_home(
+            root.join("home"),
+            root.join("data"),
+            root.join("config"),
+            project.map(ProjectRoot::new),
+        )
     }
 }

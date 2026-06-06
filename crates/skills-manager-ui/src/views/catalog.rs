@@ -1,6 +1,6 @@
 use iced::{
     Alignment, Element, Length,
-    widget::{column, container, pick_list, row, scrollable, text, text_input},
+    widget::{column, container, pick_list, row, scrollable, text},
 };
 
 use crate::{
@@ -61,10 +61,14 @@ pub fn view(app: &App) -> Element<'_, Message> {
             ]
             .spacing(10)
             .align_y(Alignment::Center),
-            text_input("Save path", &app.catalog_save_path)
-                .on_input(Message::CatalogSavePathChanged)
-                .padding([10, 12])
-                .style(theme::input),
+            components::field(
+                "Save path",
+                "Relative paths are saved under the selected project folder.",
+                "agent-skills-catalog.json",
+                &app.catalog_save_path,
+                Message::CatalogSavePathChanged,
+            ),
+            components::inline_status(&app.status, app.busy),
             output,
         ]
         .spacing(12),

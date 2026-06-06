@@ -3,7 +3,7 @@ use std::{fmt, path::PathBuf};
 use iced::{Element, Task};
 use skills_manager_core::{
     CatalogFormat, ConflictPolicy, InstalledSkill, SkillCatalogSource, SkillEnablement,
-    SkillHealth, SkillScope,
+    SkillHealth, SkillScope, catalog_git_install_url,
 };
 
 use crate::{tasks, views};
@@ -58,7 +58,7 @@ pub enum Message {
     Installed(Result<String, String>),
     LoadCatalog,
     CatalogLoaded(Result<Vec<CatalogEntryState>, String>),
-    UseCatalogEntry(String),
+    PreviewCatalogEntry(InstallSource, String),
     CatalogFormatSelected(UiCatalogFormat),
     CatalogSavePathChanged(String),
     GenerateCatalog,
@@ -130,6 +130,7 @@ impl fmt::Display for ScopeFilter {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HealthFilter {
     All,
+    NeedsAttention,
     Valid,
     Warning,
     Invalid,
@@ -137,8 +138,9 @@ pub enum HealthFilter {
 }
 
 impl HealthFilter {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::All,
+        Self::NeedsAttention,
         Self::Valid,
         Self::Warning,
         Self::Invalid,
@@ -148,6 +150,10 @@ impl HealthFilter {
     pub fn matches(self, health: SkillHealth) -> bool {
         match self {
             Self::All => true,
+            Self::NeedsAttention => matches!(
+                health,
+                SkillHealth::Warning | SkillHealth::Invalid | SkillHealth::Shadowed
+            ),
             Self::Valid => health == SkillHealth::Valid,
             Self::Warning => health == SkillHealth::Warning,
             Self::Invalid => health == SkillHealth::Invalid,
@@ -160,6 +166,7 @@ impl fmt::Display for HealthFilter {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::All => "All health",
+            Self::NeedsAttention => "Needs attention",
             Self::Valid => "Valid",
             Self::Warning => "Warning",
             Self::Invalid => "Invalid",
@@ -346,7 +353,15 @@ impl fmt::Display for UiCatalogFormat {
 pub struct PreviewState {
     pub source_label: String,
     pub scope: SkillScope,
+    pub conflict_policy: ConflictPolicy,
     pub candidates: Vec<PreviewCandidateState>,
+}
+
+impl PreviewState {
+    pub fn has_blocking_conflicts(&self) -> bool {
+        self.conflict_policy == ConflictPolicy::Block
+            && self.candidates.iter().any(|candidate| candidate.conflict)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -367,7 +382,9 @@ pub struct CatalogEntryState {
     pub name: String,
     pub description: String,
     pub source_label: String,
-    pub install_url: Option<String>,
+    pub install_source: Option<InstallSource>,
+    pub source_value: Option<String>,
+    pub unavailable_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -532,7 +549,7 @@ impl App {
                 .any(|tool| tool.to_lowercase().contains(&query))
     }
 
-    fn sort_skills<'a>(&self, skills: &mut Vec<&'a InstalledSkill>) {
+    fn sort_skills(&self, skills: &mut Vec<&InstalledSkill>) {
         skills.sort_by(|left, right| match self.sort_key {
             SortKey::Priority => left
                 .scope
@@ -741,12 +758,27 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             }
             Task::none()
         }
-        Message::UseCatalogEntry(url) => {
-            app.install_source = InstallSource::Url;
-            app.source_url = url;
+        Message::PreviewCatalogEntry(source, value) => {
+            match source {
+                InstallSource::Url => {
+                    app.source_url = value.clone();
+                }
+                InstallSource::Local => {
+                    app.local_source_path = value.clone();
+                }
+                InstallSource::Catalog => {}
+            }
+            app.install_source = source;
             app.preview = None;
-            app.status = "Catalog entry copied into GitHub URL source.".to_string();
-            Task::none()
+            app.busy = true;
+            app.status = "Previewing catalog entry...".to_string();
+            tasks::preview_task(
+                app.project_path.clone(),
+                source,
+                value,
+                app.install_scope.into(),
+                app.conflict_policy.into(),
+            )
         }
         Message::CatalogFormatSelected(format) => {
             app.catalog_format = format;
@@ -856,28 +888,82 @@ pub fn catalog_entry_from_source(
 ) -> CatalogEntryState {
     match source {
         SkillCatalogSource::Git { url, path } => {
-            let install_url = path.map_or_else(
-                || url.clone(),
-                |path| format!("{}/tree/main/{}", url.trim_end_matches('/'), path),
-            );
-            CatalogEntryState {
-                name,
-                description,
-                source_label: "git".to_string(),
-                install_url: Some(install_url),
+            match catalog_git_install_url(&url, path.as_deref()) {
+                Ok(install_url) => CatalogEntryState {
+                    name,
+                    description,
+                    source_label: format!("git: {install_url}"),
+                    install_source: Some(InstallSource::Url),
+                    source_value: Some(install_url),
+                    unavailable_reason: None,
+                },
+                Err(error) => CatalogEntryState {
+                    name,
+                    description,
+                    source_label: format!("git: {url}"),
+                    install_source: None,
+                    source_value: None,
+                    unavailable_reason: Some(format!("Unavailable: {error}")),
+                },
             }
         }
         SkillCatalogSource::Local { path } => CatalogEntryState {
             name,
             description,
             source_label: format!("local: {path}"),
-            install_url: None,
+            install_source: Some(InstallSource::Local),
+            source_value: Some(path),
+            unavailable_reason: None,
         },
         SkillCatalogSource::Unknown => CatalogEntryState {
             name,
             description,
             source_label: "unknown".to_string(),
-            install_url: None,
+            install_source: None,
+            source_value: None,
+            unavailable_reason: Some(
+                "Unavailable: catalog entry does not declare a supported source.".to_string(),
+            ),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn catalog_entry_preserves_github_branch_with_path() {
+        let entry = catalog_entry_from_source(
+            "Demo".to_string(),
+            "Demo skill".to_string(),
+            SkillCatalogSource::Git {
+                url: "https://github.com/acme/skills/tree/dev".to_string(),
+                path: Some("demo".to_string()),
+            },
+        );
+
+        assert_eq!(entry.install_source, Some(InstallSource::Url));
+        assert_eq!(
+            entry.source_value.as_deref(),
+            Some("https://github.com/acme/skills/tree/dev/demo")
+        );
+        assert!(entry.unavailable_reason.is_none());
+    }
+
+    #[test]
+    fn catalog_entry_marks_unsupported_git_source_unavailable() {
+        let entry = catalog_entry_from_source(
+            "Demo".to_string(),
+            "Demo skill".to_string(),
+            SkillCatalogSource::Git {
+                url: "https://example.com/acme/skills".to_string(),
+                path: Some("demo".to_string()),
+            },
+        );
+
+        assert_eq!(entry.install_source, None);
+        assert_eq!(entry.source_value, None);
+        assert!(entry.unavailable_reason.is_some());
     }
 }

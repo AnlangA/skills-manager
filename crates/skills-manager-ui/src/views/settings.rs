@@ -1,6 +1,6 @@
 use iced::{
     Alignment, Element, Length,
-    widget::{column, row, text, text_input},
+    widget::{column, row, text},
 };
 
 use crate::{app::App, app::Message, components, icons, theme};
@@ -11,10 +11,13 @@ pub fn view(app: &App) -> Element<'_, Message> {
     components::panel(
         column![
             components::section_header("Settings", "Open Agent Skills convention"),
-            text_input("Project folder", &app.project_path)
-                .on_input(Message::ProjectPathChanged)
-                .padding([10, 12])
-                .style(theme::input),
+            components::field(
+                "Project folder",
+                "Project scope resolves to <project>/.agents/skills.",
+                "/path/to/project",
+                &app.project_path,
+                Message::ProjectPathChanged,
+            ),
             row![
                 components::metric("Project skills", counts.project.to_string(), theme::PRIMARY),
                 components::metric("User skills", counts.user.to_string(), theme::CYAN),

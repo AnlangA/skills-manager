@@ -78,29 +78,59 @@ pub fn flat_panel(_theme: &Theme) -> container::Style {
     }
 }
 
-pub fn selected_row(_theme: &Theme) -> container::Style {
+pub fn table_header(_theme: &Theme) -> container::Style {
+    container::Style {
+        text_color: Some(SUBTLE),
+        background: Some(Background::Color(Color::from_rgb8(241, 245, 249))),
+        border: Border {
+            width: 1.0,
+            radius: 6.0.into(),
+            color: BORDER,
+        },
+        ..container::Style::default()
+    }
+}
+
+pub fn table_row(_theme: &Theme) -> container::Style {
+    container::Style {
+        text_color: Some(TEXT),
+        background: Some(Background::Color(SURFACE)),
+        border: Border {
+            width: 1.0,
+            radius: 6.0.into(),
+            color: BORDER,
+        },
+        ..container::Style::default()
+    }
+}
+
+pub fn selected_table_row(_theme: &Theme) -> container::Style {
     container::Style {
         text_color: Some(TEXT),
         background: Some(Background::Color(Color::from_rgb8(239, 246, 255))),
         border: Border {
             width: 1.0,
-            radius: 8.0.into(),
+            radius: 6.0.into(),
             color: PRIMARY,
         },
         ..container::Style::default()
     }
 }
 
-pub fn row(_theme: &Theme) -> container::Style {
-    container::Style {
-        text_color: Some(TEXT),
-        background: Some(Background::Color(SURFACE_ALT)),
+pub fn subtle_button(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |_theme, _status| button::Style {
+        text_color: if selected { PRIMARY } else { MUTED },
+        background: Some(Background::Color(if selected {
+            Color::from_rgb8(219, 234, 254)
+        } else {
+            Color::from_rgb8(248, 250, 252)
+        })),
         border: Border {
             width: 1.0,
-            radius: 8.0.into(),
-            color: BORDER,
+            radius: 6.0.into(),
+            color: if selected { PRIMARY } else { BORDER },
         },
-        ..container::Style::default()
+        ..button::Style::default()
     }
 }
 

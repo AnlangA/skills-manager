@@ -340,19 +340,17 @@ pub fn format_bytes(bytes: u64) -> String {
 fn mark_shadowed_skills(skills: &mut [InstalledSkill]) {
     let mut winners: HashMap<String, (PathBuf, usize)> = HashMap::new();
 
-    for index in 0..skills.len() {
-        let key = skill_identity(&skills[index]);
+    for (index, skill) in skills.iter_mut().enumerate() {
+        let key = skill_identity(skill);
         if let Some((winner_path, _winner_index)) = winners.get(&key) {
-            skills[index].shadowed_by = Some(winner_path.clone());
-            skills[index]
-                .diagnostics
-                .push(SkillDiagnostic::warning(format!(
-                    "Shadowed by higher-priority skill at {}",
-                    winner_path.display()
-                )));
-            skills[index].health = health_from_diagnostics(&skills[index].diagnostics, true);
+            skill.shadowed_by = Some(winner_path.clone());
+            skill.diagnostics.push(SkillDiagnostic::warning(format!(
+                "Shadowed by higher-priority skill at {}",
+                winner_path.display()
+            )));
+            skill.health = health_from_diagnostics(&skill.diagnostics, true);
         } else {
-            winners.insert(key, (skills[index].root_dir.clone(), index));
+            winners.insert(key, (skill.root_dir.clone(), index));
         }
     }
 }

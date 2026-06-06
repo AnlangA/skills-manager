@@ -1,6 +1,6 @@
 use iced::{
     Alignment, Element, Length,
-    widget::{Button, Container, button, column, container, row, text},
+    widget::{Button, Container, button, column, container, row, text, text_input},
 };
 use skills_manager_core::{SkillEnablement, SkillHealth, SkillScope};
 
@@ -43,6 +43,42 @@ pub fn metric<'a>(
     .padding([9, 12])
     .width(Length::FillPortion(1))
     .style(theme::flat_panel)
+}
+
+pub fn field<'a, F>(
+    label: &'a str,
+    helper: &'a str,
+    placeholder: &'a str,
+    value: &'a str,
+    on_input: F,
+) -> Element<'a, Message>
+where
+    F: 'a + Fn(String) -> Message,
+{
+    column![
+        text(label).size(12).color(theme::TEXT),
+        text_input(placeholder, value)
+            .on_input(on_input)
+            .padding([10, 12])
+            .style(theme::input)
+            .width(Length::Fill),
+        text(helper).size(11).color(theme::SUBTLE),
+    ]
+    .spacing(5)
+    .into()
+}
+
+pub fn notice<'a>(title: &'a str, body: &'a str) -> Container<'a, Message> {
+    flat_panel(
+        column![
+            text(title).size(13).color(theme::TEXT),
+            text(body)
+                .size(12)
+                .color(theme::MUTED)
+                .wrapping(text::Wrapping::WordOrGlyph),
+        ]
+        .spacing(5),
+    )
 }
 
 pub fn primary_button<'a>(label: &'a str, icon: Option<&'static str>) -> Button<'a, Message> {
@@ -158,6 +194,11 @@ pub fn status_badge<'a>(status: &'a str, busy: bool) -> Container<'a, Message> {
     )
     .padding([8, 12])
     .style(theme::chip(background, foreground))
+}
+
+pub fn inline_status<'a>(status: &'a str, busy: bool) -> Container<'a, Message> {
+    let title = if busy { "Working" } else { "Current status" };
+    notice(title, status)
 }
 
 pub fn empty_state<'a>(title: &'a str, body: &'a str) -> Container<'a, Message> {

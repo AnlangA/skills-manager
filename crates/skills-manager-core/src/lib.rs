@@ -12,7 +12,7 @@ pub use download::{
     DownloadedCatalog, download_github_catalog, download_github_marketplace, download_github_skills,
 };
 pub use error::{Result, SkillsManagerError};
-pub use github::GitHubTreeSource;
+pub use github::{GitHubTreeSource, catalog_git_install_url};
 pub use install::{
     ConflictPolicy, InstallCandidate, InstallPreview, InstallRequest, InstallResult, Installer,
 };

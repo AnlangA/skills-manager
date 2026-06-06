@@ -44,7 +44,7 @@ pub fn preview_task(
                     let preview = installer
                         .preview(downloaded.temp_dir.path(), scope, conflict_policy)
                         .map_err(|error| error.to_string())?;
-                    Ok(preview_state(value, preview))
+                    Ok(preview_state(value, preview, conflict_policy))
                 }
                 InstallSource::Local => {
                     let preview = installer
@@ -54,39 +54,10 @@ pub fn preview_task(
                             conflict_policy,
                         )
                         .map_err(|error| error.to_string())?;
-                    Ok(preview_state(value, preview))
+                    Ok(preview_state(value, preview, conflict_policy))
                 }
                 InstallSource::Catalog => {
-                    let downloaded =
-                        download_github_catalog(&value).map_err(|error| error.to_string())?;
-                    Ok(PreviewState {
-                        source_label: downloaded
-                            .catalog
-                            .name
-                            .unwrap_or_else(|| "Catalog".to_string()),
-                        scope,
-                        candidates: downloaded
-                            .catalog
-                            .skills
-                            .into_iter()
-                            .map(|entry| PreviewCandidateState {
-                                name: entry.display_name.unwrap_or(entry.name),
-                                description: entry
-                                    .description
-                                    .unwrap_or_else(|| "No description".to_string()),
-                                source_root: PathBuf::from("catalog"),
-                                destination_root: PathBuf::from("choose-entry"),
-                                health: skills_manager_core::SkillHealth::Warning,
-                                conflict: false,
-                                diagnostics: vec![
-                                    "Use a catalog entry to copy its GitHub source, then preview it."
-                                        .to_string(),
-                                ],
-                                resource_count: 0,
-                                resource_bytes: 0,
-                            })
-                            .collect(),
-                    })
+                    Err("Load the catalog, then preview one catalog entry.".to_string())
                 }
             }
         },
@@ -224,10 +195,12 @@ pub fn remove_task(project_path: String, skill_root: PathBuf) -> Task<Message> {
 fn preview_state(
     source_label: String,
     preview: skills_manager_core::InstallPreview,
+    conflict_policy: ConflictPolicy,
 ) -> PreviewState {
     PreviewState {
         source_label,
         scope: preview.scope,
+        conflict_policy,
         candidates: preview
             .candidates
             .into_iter()
@@ -270,9 +243,7 @@ fn paths_from_project(project_path: &str) -> Result<ManagerPaths, String> {
 
 fn resolve_save_path(project_path: &str, save_path: &str) -> PathBuf {
     let path = PathBuf::from(save_path.trim());
-    if path.is_absolute() {
-        path
-    } else if project_path.trim().is_empty() {
+    if path.is_absolute() || project_path.trim().is_empty() {
         path
     } else {
         Path::new(project_path.trim()).join(path)

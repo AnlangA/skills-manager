@@ -11,7 +11,6 @@ pub const FOLDER: &str = "\u{E0D7}";
 pub const GLOBE: &str = "\u{E0E8}";
 pub const SHIELD: &str = "\u{E1FF}";
 pub const SPARKLES: &str = "\u{E412}";
-pub const UPLOAD: &str = "\u{E19E}";
 pub const DATABASE: &str = "\u{E0AD}";
 pub const FILE: &str = "\u{E0CC}";
 pub const EYE: &str = "\u{E0BA}";

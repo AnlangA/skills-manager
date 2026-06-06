@@ -1,6 +1,6 @@
 use iced::{
     Alignment, Element, Length,
-    widget::{checkbox, column, container, pick_list, row, rule, scrollable, text, text_input},
+    widget::{button, checkbox, column, container, pick_list, row, rule, scrollable, text},
 };
 use skills_manager_core::{InstalledSkill, format_bytes};
 
@@ -39,14 +39,13 @@ pub fn view(app: &App) -> Element<'_, Message> {
     .spacing(8);
 
     let filters = column![
-        text_input(
-            "Search name, description, folder, or allowed tools",
-            &app.search_query
-        )
-        .on_input(Message::SearchChanged)
-        .padding([10, 12])
-        .style(theme::input)
-        .width(Length::Fill),
+        components::field(
+            "Search inventory",
+            "Matches skill name, description, folder, and allowed tools.",
+            "Search local skills",
+            &app.search_query,
+            Message::SearchChanged,
+        ),
         row![
             pick_list(
                 ScopeFilter::ALL,
@@ -79,6 +78,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
         ]
         .spacing(10)
         .align_y(Alignment::Center),
+        quick_filters(app),
     ]
     .spacing(10);
 
@@ -86,6 +86,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
         column![
             components::section_header("Inventory", format!("{} matching", visible.len())),
             filters,
+            table_header(app),
             scrollable(skill_list(app, &visible)).height(Length::Fill),
         ]
         .spacing(12),
@@ -141,50 +142,161 @@ fn skill_row<'a>(skill: &'a InstalledSkill, selected: bool, busy: bool) -> Eleme
         .on_press(Message::SelectSkill(id));
     let remove = components::danger_button("Remove", Some(icons::TRASH))
         .on_press_maybe((!busy).then_some(Message::RemoveSkill(skill_root)));
+    let installed = skill
+        .installed_at
+        .map(|time| time.format("%Y-%m-%d").to_string())
+        .unwrap_or_else(|| "Unknown".to_string());
 
     container(
         row![
             toggle,
             column![
-                row![
-                    text(&skill.display_name).size(16).color(theme::TEXT),
-                    components::health_chip(skill.health),
-                    components::scope_chip(skill.scope),
-                    components::enablement_chip(skill.enablement),
-                ]
-                .spacing(7)
-                .align_y(Alignment::Center),
+                text(&skill.display_name).size(15).color(theme::TEXT),
                 text(skill.description.as_deref().unwrap_or("No description"))
-                    .size(13)
+                    .size(12)
                     .color(theme::MUTED)
                     .wrapping(text::Wrapping::WordOrGlyph),
-                text(format!(
-                    "{} resource(s), {} • {}",
-                    skill.resource_count,
-                    format_bytes(skill.resource_bytes),
+            ]
+            .spacing(4)
+            .width(Length::FillPortion(5)),
+            column![
+                components::health_chip(skill.health),
+                components::enablement_chip(skill.enablement),
+            ]
+            .spacing(5)
+            .width(Length::FillPortion(2)),
+            column![
+                components::scope_chip(skill.scope),
+                text(
                     skill
                         .source_url
                         .as_deref()
                         .map(source_summary)
                         .unwrap_or("unknown source")
-                ))
-                .size(12)
+                )
+                .size(11)
                 .color(theme::SUBTLE),
             ]
+            .spacing(5)
+            .width(Length::FillPortion(2)),
+            column![
+                text(skill.resource_count.to_string())
+                    .size(13)
+                    .color(theme::TEXT),
+                text(format_bytes(skill.resource_bytes))
+                    .size(11)
+                    .color(theme::SUBTLE),
+            ]
             .spacing(4)
-            .width(Length::Fill),
-            row![details, remove].spacing(8).align_y(Alignment::Center),
+            .width(Length::FillPortion(2)),
+            text(installed)
+                .size(12)
+                .color(theme::MUTED)
+                .width(Length::FillPortion(2)),
+            row![details, remove]
+                .spacing(6)
+                .align_y(Alignment::Center)
+                .width(Length::Shrink),
         ]
-        .spacing(12)
+        .spacing(10)
         .align_y(Alignment::Center),
     )
-    .padding(12)
+    .padding([9, 10])
     .style(if selected {
-        theme::selected_row
+        theme::selected_table_row
     } else {
-        theme::row
+        theme::table_row
     })
     .into()
+}
+
+fn table_header(app: &App) -> Element<'_, Message> {
+    container(
+        row![
+            text("").width(Length::Fixed(22.0)),
+            sort_header("Skill", SortKey::Name, app.sort_key).width(Length::FillPortion(5)),
+            sort_header("Health", SortKey::Health, app.sort_key).width(Length::FillPortion(2)),
+            sort_header("Scope / Source", SortKey::Scope, app.sort_key)
+                .width(Length::FillPortion(2)),
+            sort_header("Resources", SortKey::Resources, app.sort_key)
+                .width(Length::FillPortion(2)),
+            sort_header("Installed", SortKey::Installed, app.sort_key)
+                .width(Length::FillPortion(2)),
+            text("Actions")
+                .size(11)
+                .color(theme::SUBTLE)
+                .width(Length::Shrink),
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center),
+    )
+    .padding([7, 10])
+    .style(theme::table_header)
+    .into()
+}
+
+fn sort_header<'a>(
+    label: &'a str,
+    key: SortKey,
+    current: SortKey,
+) -> iced::widget::Button<'a, Message> {
+    let active = key == current;
+    button(
+        text(if active {
+            format!("{label} sorted")
+        } else {
+            label.to_string()
+        })
+        .size(11),
+    )
+    .padding([4, 6])
+    .style(theme::subtle_button(active))
+    .on_press(Message::SortSelected(key))
+}
+
+fn quick_filters(app: &App) -> Element<'_, Message> {
+    let counts = app.counts();
+    row![
+        quick_filter(
+            "Needs attention",
+            counts.warning + counts.invalid + counts.shadowed,
+            HealthFilter::NeedsAttention,
+            app.health_filter,
+        ),
+        quick_filter(
+            "Invalid",
+            counts.invalid,
+            HealthFilter::Invalid,
+            app.health_filter,
+        ),
+        quick_filter(
+            "Warnings",
+            counts.warning,
+            HealthFilter::Warning,
+            app.health_filter,
+        ),
+        quick_filter(
+            "Shadowed",
+            counts.shadowed,
+            HealthFilter::Shadowed,
+            app.health_filter,
+        ),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+fn quick_filter<'a>(
+    label: &'a str,
+    count: usize,
+    filter: HealthFilter,
+    selected: HealthFilter,
+) -> iced::widget::Button<'a, Message> {
+    button(text(format!("{label} {count}")).size(12))
+        .padding([6, 9])
+        .style(theme::subtle_button(filter == selected))
+        .on_press(Message::HealthFilterSelected(filter))
 }
 
 fn skill_inspector(
