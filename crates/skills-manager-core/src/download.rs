@@ -1,7 +1,9 @@
 use std::{
     fs,
-    io::{Cursor, Read},
+    io::Cursor,
     path::{Path, PathBuf},
+    sync::OnceLock,
+    time::Duration,
 };
 
 use chrono::{DateTime, Utc};
@@ -16,6 +18,9 @@ use crate::{
         SkillCandidate, discover_skill_candidates, format_bytes, path_key, sanitize_folder_name,
     },
 };
+
+const MAX_ARCHIVE_BYTES: usize = 128 * 1024 * 1024;
+const MAX_ARCHIVE_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug)]
 pub struct DownloadedSkills {
@@ -131,16 +136,24 @@ pub fn cache_github_skills_archive(
         return Err(SkillsManagerError::NoSkillsFound);
     }
 
-    config.record_download(&bundle_root, url.to_string());
-    config.save(paths)?;
-
-    downloaded_entry(
+    let entry = downloaded_entry(
         url.to_string(),
-        bundle_root,
+        bundle_root.clone(),
         Some(Utc::now()),
         candidates,
-        search_root,
-    )
+        search_root.clone(),
+    )?;
+    config.record_download_summary(
+        &bundle_root,
+        url.to_string(),
+        &search_root,
+        entry.candidate_count,
+        entry.resource_count,
+        entry.resource_bytes,
+    );
+    config.save(paths)?;
+
+    Ok(entry)
 }
 
 pub fn list_downloaded_skills(paths: &ManagerPaths) -> Result<Vec<DownloadedSkillEntry>> {
@@ -154,16 +167,39 @@ pub fn list_downloaded_skills(paths: &ManagerPaths) -> Result<Vec<DownloadedSkil
             continue;
         }
 
-        let source = GitHubTreeSource::parse(&metadata.source_url)?;
-        let search_root = filtered_search_root(&root_dir, source.path_filter())?;
-        let candidates = discover_skill_candidates(&search_root)?;
-        entries.push(downloaded_entry(
-            metadata.source_url.clone(),
-            root_dir,
-            metadata.downloaded_at,
-            candidates,
-            search_root,
-        )?);
+        if let (
+            Some(search_root),
+            Some(candidate_count),
+            Some(resource_count),
+            Some(resource_bytes),
+        ) = (
+            metadata.search_root.clone().filter(|path| path.exists()),
+            metadata.candidate_count,
+            metadata.resource_count,
+            metadata.resource_bytes,
+        ) {
+            entries.push(DownloadedSkillEntry {
+                id: path_key(&root_dir),
+                source_url: metadata.source_url.clone(),
+                root_dir,
+                search_root,
+                downloaded_at: metadata.downloaded_at,
+                candidate_count,
+                resource_count,
+                resource_bytes,
+            });
+        } else {
+            let source = GitHubTreeSource::parse(&metadata.source_url)?;
+            let search_root = filtered_search_root(&root_dir, source.path_filter())?;
+            let candidates = discover_skill_candidates(&search_root)?;
+            entries.push(downloaded_entry(
+                metadata.source_url.clone(),
+                root_dir,
+                metadata.downloaded_at,
+                candidates,
+                search_root,
+            )?);
+        }
     }
 
     entries.sort_by(|left, right| {
@@ -269,7 +305,7 @@ pub async fn download_github_catalog(url: &str) -> Result<DownloadedCatalog> {
 }
 
 async fn download_first_archive(source: &GitHubTreeSource) -> Result<Vec<u8>> {
-    let client = reqwest::Client::builder().build()?;
+    let client = github_client()?;
     let mut last_error = None;
 
     for url in source.archive_url_candidates() {
@@ -285,7 +321,14 @@ async fn download_first_archive(source: &GitHubTreeSource) -> Result<Vec<u8>> {
 
         if response.status().is_success() {
             debug!(%url, status = %response.status(), "downloaded GitHub archive");
-            return Ok(response.bytes().await?.to_vec());
+            let bytes = response.bytes().await?;
+            if bytes.len() > MAX_ARCHIVE_BYTES {
+                return Err(SkillsManagerError::ArchiveTooLarge {
+                    bytes: bytes.len() as u64,
+                    max_bytes: MAX_ARCHIVE_BYTES as u64,
+                });
+            }
+            return Ok(bytes.to_vec());
         }
 
         debug!(%url, status = %response.status(), "archive URL returned non-success status");
@@ -297,6 +340,20 @@ async fn download_first_archive(source: &GitHubTreeSource) -> Result<Vec<u8>> {
     }
 }
 
+fn github_client() -> Result<reqwest::Client> {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    if let Some(client) = CLIENT.get() {
+        return Ok(client.clone());
+    }
+
+    let client = reqwest::Client::builder()
+        .user_agent("skills-manager/0.1")
+        .timeout(Duration::from_secs(30))
+        .build()?;
+    let _ = CLIENT.set(client.clone());
+    Ok(client)
+}
+
 pub fn extract_zip_safe(bytes: &[u8], destination: &Path) -> Result<()> {
     let reader = Cursor::new(bytes);
     let mut archive = ZipArchive::new(reader)?;
@@ -306,20 +363,27 @@ pub fn extract_zip_safe(bytes: &[u8], destination: &Path) -> Result<()> {
         let enclosed = file
             .enclosed_name()
             .ok_or_else(|| SkillsManagerError::UnsafeArchivePath(file.name().to_string()))?;
-        let output = destination.join(enclosed);
+        let output = destination.join(&enclosed);
 
         if file.is_dir() {
             fs::create_dir_all(&output)?;
             continue;
         }
 
+        if file.size() > MAX_ARCHIVE_ENTRY_BYTES {
+            return Err(SkillsManagerError::ArchiveEntryTooLarge {
+                path: enclosed.display().to_string(),
+                bytes: file.size(),
+                max_bytes: MAX_ARCHIVE_ENTRY_BYTES,
+            });
+        }
+
         if let Some(parent) = output.parent() {
             fs::create_dir_all(parent)?;
         }
 
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)?;
-        fs::write(output, bytes)?;
+        let mut output_file = fs::File::create(output)?;
+        std::io::copy(&mut file, &mut output_file)?;
     }
 
     Ok(())
@@ -441,6 +505,11 @@ mod tests {
         assert!(entry.root_dir.starts_with(paths.downloads_dir()));
         assert_eq!(entry.candidate_count, 1);
         assert!(entry.search_root.join("repo-main/skill/SKILL.md").exists());
+
+        let listed = list_downloaded_skills(&paths).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].candidate_count, 1);
+        assert_eq!(listed[0].resource_count, entry.resource_count);
     }
 
     #[test]

@@ -176,7 +176,7 @@ fn destination_controls(app: &App) -> Element<'_, Message> {
     if app.install.install_scope == UiScope::Custom {
         controls = controls.push(components::field(
             "Custom install path",
-            "This folder becomes a managed Custom root in Inventory.",
+            "This folder becomes a managed Custom root in Library.",
             "/path/to/skills/root",
             &app.install.custom_install_path,
             Message::CustomInstallPathChanged,

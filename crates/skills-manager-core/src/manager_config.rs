@@ -7,7 +7,7 @@ use std::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::{ManagerPaths, Result, skill::path_key};
+use crate::{ManagerPaths, Result, fs_ops::atomic_write, skill::path_key};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ManagerConfig {
@@ -35,6 +35,14 @@ pub struct InstalledMetadata {
 pub struct DownloadedMetadata {
     pub source_url: String,
     pub downloaded_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub search_root: Option<PathBuf>,
+    #[serde(default)]
+    pub candidate_count: Option<usize>,
+    #[serde(default)]
+    pub resource_count: Option<usize>,
+    #[serde(default)]
+    pub resource_bytes: Option<u64>,
 }
 
 impl ManagerConfig {
@@ -53,8 +61,8 @@ impl ManagerConfig {
         if let Some(parent) = file.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(
-            file,
+        atomic_write(
+            &file,
             toml::to_string_pretty(self).expect("serializing manager config"),
         )?;
         Ok(())
@@ -116,6 +124,32 @@ impl ManagerConfig {
             DownloadedMetadata {
                 source_url,
                 downloaded_at: Some(Utc::now()),
+                search_root: None,
+                candidate_count: None,
+                resource_count: None,
+                resource_bytes: None,
+            },
+        );
+    }
+
+    pub fn record_download_summary(
+        &mut self,
+        root_dir: &Path,
+        source_url: String,
+        search_root: &Path,
+        candidate_count: usize,
+        resource_count: usize,
+        resource_bytes: u64,
+    ) {
+        self.downloads.insert(
+            path_key(root_dir),
+            DownloadedMetadata {
+                source_url,
+                downloaded_at: Some(Utc::now()),
+                search_root: Some(search_root.to_path_buf()),
+                candidate_count: Some(candidate_count),
+                resource_count: Some(resource_count),
+                resource_bytes: Some(resource_bytes),
             },
         );
     }

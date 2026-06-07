@@ -11,7 +11,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
 
     components::panel(scrollable(
         column![
-            components::section_header("Settings", "Project, target, and download cache paths"),
+            components::section_header("Targets", "Project, target, and download cache paths"),
             components::field(
                 "Project folder",
                 "Project scope resolves to <project>/.agents/skills.",

@@ -30,6 +30,16 @@ pub enum SkillsManagerError {
     #[error("archive entry tried to write outside the extraction directory: {0}")]
     UnsafeArchivePath(String),
 
+    #[error("archive is too large: {bytes} bytes (limit {max_bytes} bytes)")]
+    ArchiveTooLarge { bytes: u64, max_bytes: u64 },
+
+    #[error("archive entry `{path}` is too large: {bytes} bytes (limit {max_bytes} bytes)")]
+    ArchiveEntryTooLarge {
+        path: String,
+        bytes: u64,
+        max_bytes: u64,
+    },
+
     #[error("skill path is not inside the configured global or project skill roots: {0}")]
     UnknownSkillScope(PathBuf),
 

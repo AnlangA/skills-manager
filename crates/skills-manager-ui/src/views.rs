@@ -92,11 +92,11 @@ fn main_content(app: &App) -> Element<'_, Message> {
     .align_y(Alignment::Center);
 
     let body = match app.active_view {
-        ActiveView::Inventory => inventory::view(app),
+        ActiveView::Library => inventory::view(app),
         ActiveView::Install => install::view(app),
         ActiveView::Create => create::view(app),
         ActiveView::Catalog => catalog::view(app),
-        ActiveView::Settings => settings::view(app),
+        ActiveView::Targets => settings::view(app),
     };
 
     container(column![header, body].padding([16, 18]).spacing(12))
@@ -107,10 +107,10 @@ fn main_content(app: &App) -> Element<'_, Message> {
 
 fn nav_icon(view: ActiveView) -> &'static str {
     match view {
-        ActiveView::Inventory => icons::LIST,
+        ActiveView::Library => icons::LIST,
         ActiveView::Install => icons::DOWNLOAD,
         ActiveView::Create => icons::FILE,
         ActiveView::Catalog => icons::DATABASE,
-        ActiveView::Settings => icons::SETTINGS,
+        ActiveView::Targets => icons::SETTINGS,
     }
 }

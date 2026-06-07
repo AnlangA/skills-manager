@@ -2,15 +2,16 @@ use std::{fmt, path::PathBuf, time::Duration};
 
 use iced::{Element, Subscription, Task};
 use skills_manager_core::{
-    CatalogFormat, ConflictPolicy, DoctorReport, InstallTarget, InstalledSkill, SkillCatalogSource,
-    SkillEnablement, SkillHealth, SkillScaffoldPreview, SkillScaffoldRequest, SkillScope,
-    TargetProfile, catalog_git_install_url, visible_skill_scopes,
+    CatalogFormat, ConflictPolicy, DoctorReport, InstallTarget, InstalledSkill, OperationPlan,
+    SkillCatalogSource, SkillEnablement, SkillHealth, SkillScaffoldPreview, SkillScaffoldRequest,
+    SkillScope, TargetProfile, WorkspaceSnapshot, catalog_git_install_url, visible_skill_scopes,
 };
 
 use crate::{tasks, views};
 
 #[derive(Debug, Clone)]
 pub struct App {
+    pub snapshot: Option<WorkspaceSnapshot>,
     pub skills: Vec<InstalledSkill>,
     pub active_view: ActiveView,
     pub inventory: InventoryState,
@@ -86,7 +87,7 @@ pub struct AppSettingsState {
 #[derive(Debug, Clone)]
 pub enum Message {
     Refresh,
-    SkillsLoaded(Result<Vec<InstalledSkill>, String>),
+    WorkspaceLoaded(Result<WorkspaceSnapshot, String>),
     ProjectPathChanged(String),
     SearchChanged(String),
     ActiveViewSelected(ActiveView),
@@ -108,8 +109,6 @@ pub enum Message {
     CustomInstallPathChanged(String),
     EnableAfterInstallChanged(bool),
     ConflictSelected(UiConflictPolicy),
-    SettingsLoaded(Result<ManagerSettingsState, String>),
-    DownloadsLoaded(Result<Vec<DownloadedEntryState>, String>),
     DownloadSource,
     Downloaded(Result<String, String>),
     PreviewInstall,
@@ -154,29 +153,29 @@ pub enum Message {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActiveView {
-    Inventory,
+    Library,
     Install,
     Create,
     Catalog,
-    Settings,
+    Targets,
 }
 
 impl ActiveView {
     pub const ALL: [Self; 5] = [
-        Self::Inventory,
+        Self::Library,
         Self::Install,
         Self::Create,
         Self::Catalog,
-        Self::Settings,
+        Self::Targets,
     ];
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Inventory => "Inventory",
+            Self::Library => "Library",
             Self::Install => "Install",
             Self::Create => "Create",
             Self::Catalog => "Catalog",
-            Self::Settings => "Settings",
+            Self::Targets => "Targets",
         }
     }
 }
@@ -506,12 +505,11 @@ impl fmt::Display for UiCatalogFormat {
 #[derive(Debug, Clone)]
 pub struct PreviewState {
     pub source_label: String,
-    pub source_root: PathBuf,
-    pub source_url: Option<String>,
     pub download_root: Option<PathBuf>,
     pub scope: SkillScope,
     pub destination_root: PathBuf,
     pub conflict_policy: ConflictPolicy,
+    pub operation_plan: Option<OperationPlan>,
     pub candidates: Vec<PreviewCandidateState>,
 }
 
@@ -552,13 +550,6 @@ pub struct DownloadedEntryState {
     pub summary: String,
 }
 
-#[derive(Debug, Clone)]
-pub struct ManagerSettingsState {
-    pub default_download_path: String,
-    pub target_profiles: Vec<TargetProfile>,
-    pub doctor_report: DoctorReport,
-}
-
 #[derive(Debug, Clone, Copy)]
 pub struct SkillCounts {
     pub enabled: usize,
@@ -591,8 +582,9 @@ impl App {
             .unwrap_or_default();
 
         let app = Self {
+            snapshot: None,
             skills: Vec::new(),
-            active_view: ActiveView::Inventory,
+            active_view: ActiveView::Library,
             inventory: InventoryState {
                 search_query: String::new(),
                 selected_skill_id: None,
@@ -648,11 +640,11 @@ impl App {
             smoke_test,
         };
 
-        let task = Task::batch([
-            tasks::refresh_task(app.settings.project_path.clone()),
-            tasks::load_settings_task(app.settings.project_path.clone()),
-            tasks::load_downloads_task(app.settings.project_path.clone()),
-        ]);
+        let task = if smoke_test {
+            Task::done(Message::SmokeExit)
+        } else {
+            tasks::load_workspace_task(app.settings.project_path.clone())
+        };
         (app, task)
     }
 
@@ -844,19 +836,48 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
     match message {
         Message::Refresh => {
             app.busy = true;
-            app.status = "Scanning Agent Skills...".to_string();
-            Task::batch([
-                tasks::refresh_task(app.settings.project_path.clone()),
-                tasks::load_settings_task(app.settings.project_path.clone()),
-                tasks::load_downloads_task(app.settings.project_path.clone()),
-            ])
+            app.status = "Loading workspace snapshot...".to_string();
+            tasks::load_workspace_task(app.settings.project_path.clone())
         }
-        Message::SkillsLoaded(result) => {
+        Message::WorkspaceLoaded(result) => {
             app.busy = false;
             match result {
-                Ok(skills) => {
-                    app.status = format!("Loaded {} skill(s).", skills.len());
-                    app.skills = skills;
+                Ok(snapshot) => {
+                    app.status = format!(
+                        "Loaded {} skill(s), {} download(s), and {} target(s).",
+                        snapshot.skills.len(),
+                        snapshot.downloads.len(),
+                        snapshot.target_profiles.len()
+                    );
+                    app.install.downloaded_entries = snapshot
+                        .downloads
+                        .iter()
+                        .cloned()
+                        .map(tasks::downloaded_entry_state)
+                        .collect();
+                    if app
+                        .install
+                        .selected_download_root
+                        .as_ref()
+                        .is_none_or(|selected| {
+                            !app.install
+                                .downloaded_entries
+                                .iter()
+                                .any(|entry| &entry.root_dir == selected)
+                        })
+                    {
+                        app.install.selected_download_root = app
+                            .install
+                            .downloaded_entries
+                            .first()
+                            .map(|entry| entry.root_dir.clone());
+                    }
+                    app.settings.default_download_path =
+                        snapshot.default_download_path.display().to_string();
+                    app.settings.target_profiles = snapshot.target_profiles.clone();
+                    app.settings.doctor_report = Some(snapshot.doctor_report.clone());
+                    app.skills = snapshot.skills.clone();
+                    app.snapshot = Some(snapshot);
                     app.ensure_selection();
                 }
                 Err(error) => app.status = error,
@@ -865,37 +886,6 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::ProjectPathChanged(value) => {
             app.settings.project_path = value;
-            Task::none()
-        }
-        Message::SettingsLoaded(result) => {
-            match result {
-                Ok(settings) => {
-                    app.settings.default_download_path = settings.default_download_path;
-                    app.settings.target_profiles = settings.target_profiles;
-                    app.settings.doctor_report = Some(settings.doctor_report);
-                }
-                Err(error) => app.status = error,
-            }
-            Task::none()
-        }
-        Message::DownloadsLoaded(result) => {
-            match result {
-                Ok(entries) => {
-                    if app
-                        .install
-                        .selected_download_root
-                        .as_ref()
-                        .is_none_or(|selected| {
-                            !entries.iter().any(|entry| &entry.root_dir == selected)
-                        })
-                    {
-                        app.install.selected_download_root =
-                            entries.first().map(|entry| entry.root_dir.clone());
-                    }
-                    app.install.downloaded_entries = entries;
-                }
-                Err(error) => app.status = error,
-            }
             Task::none()
         }
         Message::SearchChanged(value) => {
@@ -967,10 +957,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::DefaultDownloadPathSaved(result) => {
             app.busy = false;
             app.status = result.unwrap_or_else(|error| error);
-            Task::batch([
-                tasks::load_settings_task(app.settings.project_path.clone()),
-                tasks::load_downloads_task(app.settings.project_path.clone()),
-            ])
+            tasks::load_workspace_task(app.settings.project_path.clone())
         }
         Message::DownloadPathOverrideChanged(value) => {
             app.install.download_path_override = value;
@@ -1013,7 +1000,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::Downloaded(result) => {
             app.busy = false;
             app.status = result.unwrap_or_else(|error| error);
-            tasks::load_downloads_task(app.settings.project_path.clone())
+            tasks::load_workspace_task(app.settings.project_path.clone())
         }
         Message::PreviewInstall => {
             let source = current_source_value(app);
@@ -1039,6 +1026,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                 optional_path(&app.install.download_path_override),
                 target,
                 app.install.conflict_policy.into(),
+                app.install.enable_after_install,
             )
         }
         Message::PreviewLoaded(result) => {
@@ -1057,33 +1045,20 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                 app.status = "Preview a source before installing.".to_string();
                 return Task::none();
             };
-            let target = match current_install_target(app) {
-                Ok(target) => target,
-                Err(error) => {
-                    app.status = error;
-                    return Task::none();
-                }
+            let Some(plan) = preview.operation_plan else {
+                app.status = "Preview does not include an operation plan.".to_string();
+                return Task::none();
             };
 
             app.busy = true;
             app.status = "Installing previewed skill(s)...".to_string();
-            tasks::install_task(
-                app.settings.project_path.clone(),
-                preview.source_root,
-                preview.source_url,
-                target,
-                app.install.conflict_policy.into(),
-                app.install.enable_after_install,
-            )
+            tasks::install_task(app.settings.project_path.clone(), plan)
         }
         Message::Installed(result) => {
             app.busy = false;
             app.install.preview = None;
             app.status = result.unwrap_or_else(|error| error);
-            Task::batch([
-                tasks::refresh_task(app.settings.project_path.clone()),
-                tasks::load_downloads_task(app.settings.project_path.clone()),
-            ])
+            tasks::load_workspace_task(app.settings.project_path.clone())
         }
         Message::LoadCatalog => {
             let url = app.install.catalog_url.trim().to_string();
@@ -1144,6 +1119,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                 optional_path(&app.install.download_path_override),
                 target,
                 app.install.conflict_policy.into(),
+                app.install.enable_after_install,
             )
         }
         Message::CatalogFormatSelected(format) => {
@@ -1217,7 +1193,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::SkillToggled(result) => {
             app.busy = false;
             app.status = result.unwrap_or_else(|error| error);
-            tasks::refresh_task(app.settings.project_path.clone())
+            tasks::load_workspace_task(app.settings.project_path.clone())
         }
         Message::RequestRemoveSkill(skill_root) => {
             app.inventory.pending_remove_skill = Some(skill_root);
@@ -1240,7 +1216,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::SkillRemoved(result) => {
             app.busy = false;
             app.status = result.unwrap_or_else(|error| error);
-            tasks::refresh_task(app.settings.project_path.clone())
+            tasks::load_workspace_task(app.settings.project_path.clone())
         }
         Message::PreviewDownloaded(root_dir) => {
             let target = match current_install_target(app) {
@@ -1262,6 +1238,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                 optional_path(&app.install.download_path_override),
                 target,
                 app.install.conflict_policy.into(),
+                app.install.enable_after_install,
             )
         }
         Message::RequestRemoveDownload(root_dir) => {
@@ -1278,7 +1255,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::DownloadRemoved(result) => {
             app.busy = false;
             app.status = result.unwrap_or_else(|error| error);
-            tasks::load_downloads_task(app.settings.project_path.clone())
+            tasks::load_workspace_task(app.settings.project_path.clone())
         }
         Message::CreateNameChanged(value) => {
             app.create.name = value;
@@ -1382,10 +1359,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                 }
                 Err(error) => app.status = error,
             }
-            Task::batch([
-                tasks::refresh_task(app.settings.project_path.clone()),
-                tasks::load_settings_task(app.settings.project_path.clone()),
-            ])
+            tasks::load_workspace_task(app.settings.project_path.clone())
         }
         Message::SmokeExit => iced::exit(),
     }
@@ -1550,6 +1524,10 @@ pub fn catalog_entry_from_source(
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
+    use tempfile::tempdir;
+
     use super::*;
 
     #[test]
@@ -1607,6 +1585,35 @@ mod tests {
 
         let _ = update(&mut app, Message::DetailTabSelected(DetailTab::Diagnostics));
         assert_eq!(app.inventory.detail_tab, DetailTab::Diagnostics);
+    }
+
+    #[test]
+    fn workspace_loaded_populates_library_targets_and_download_path() {
+        let dir = tempdir().unwrap();
+        let project = dir.path().join("project");
+        let skill_dir = project.join(".agents/skills/demo");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: demo\ndescription: Use this skill when loading workspace snapshots\n---\n",
+        )
+        .unwrap();
+        let paths = skills_manager_core::ManagerPaths::with_home(
+            dir.path().join("home"),
+            dir.path().join("data"),
+            dir.path().join("config"),
+            Some(skills_manager_core::ProjectRoot::new(&project)),
+        );
+        let snapshot = WorkspaceSnapshot::load(&paths).unwrap();
+
+        let (mut app, _) = App::init_with_smoke_test(false);
+        let _ = update(&mut app, Message::WorkspaceLoaded(Ok(snapshot)));
+
+        assert_eq!(app.skills.len(), 1);
+        assert!(app.snapshot.is_some());
+        assert!(!app.settings.target_profiles.is_empty());
+        assert!(app.settings.default_download_path.contains("downloads"));
+        assert_eq!(app.active_view, ActiveView::Library);
     }
 
     fn installed_skill(scope: SkillScope, name: &str) -> InstalledSkill {

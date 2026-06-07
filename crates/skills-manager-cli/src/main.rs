@@ -7,7 +7,7 @@ use skills_manager_core::{
     CatalogFormat, ConflictPolicy, DoctorReport, DownloadedSkillEntry, InstallPreview,
     InstallRequest, InstallResult, InstallTarget, InstalledSkill, Installer, ManagerPaths,
     ProjectRoot, RepairReport, SkillCatalog, SkillHealth, SkillScaffoldPreview,
-    SkillScaffoldRequest, TargetProfile, create_skill_scaffold, doctor_report,
+    SkillScaffoldRequest, TargetProfile, WorkspaceSnapshot, create_skill_scaffold, doctor_report,
     download_github_catalog, download_github_skills_to_cache, export_installed_catalog,
     format_bytes, list_downloaded_skills, preview_skill_scaffold, remove_downloaded_skills,
     repair_targets, scan_installed_skills, target_profiles,
@@ -35,6 +35,15 @@ enum OutputMode {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    Workspace,
+    Inventory {
+        #[command(subcommand)]
+        command: InventoryCommand,
+    },
+    Install {
+        #[command(subcommand)]
+        command: InstallCommand,
+    },
     Scan,
     Validate {
         #[arg(long, value_enum)]
@@ -138,6 +147,87 @@ enum Command {
         path: PathBuf,
         #[arg(long, value_enum)]
         target: Option<CliTarget>,
+    },
+}
+
+impl Command {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Workspace => "workspace",
+            Self::Inventory { .. } => "inventory",
+            Self::Install { .. } => "install",
+            Self::Scan => "scan",
+            Self::Validate { .. } => "validate",
+            Self::Targets => "targets",
+            Self::Doctor => "doctor",
+            Self::Repair { .. } => "repair",
+            Self::Create { .. } => "create",
+            Self::PreviewInstall { .. } => "preview-install",
+            Self::InstallUrl { .. } => "install-url",
+            Self::InstallLocal { .. } => "install-local",
+            Self::Downloads { .. } => "downloads",
+            Self::Catalog { .. } => "catalog",
+            Self::LoadCatalog { .. } => "load-catalog",
+            Self::Enable { .. } => "enable",
+            Self::Disable { .. } => "disable",
+            Self::Remove { .. } => "remove",
+        }
+    }
+}
+
+#[derive(Debug, Subcommand)]
+enum InventoryCommand {
+    Scan,
+    Validate {
+        #[arg(long, value_enum)]
+        target: Option<CliTarget>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum InstallCommand {
+    Preview {
+        source: String,
+        #[arg(long)]
+        local: bool,
+        #[arg(long, value_enum, default_value_t = CliTarget::Global)]
+        target: CliTarget,
+        #[arg(long, value_enum, hide = true)]
+        scope: Option<CliScope>,
+        #[arg(long, value_name = "DIR")]
+        dest: Option<PathBuf>,
+        #[arg(long, value_name = "DIR")]
+        download_dir: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = CliConflictPolicy::Block)]
+        conflict: CliConflictPolicy,
+    },
+    Url {
+        url: String,
+        #[arg(long, value_enum, default_value_t = CliTarget::Global)]
+        target: CliTarget,
+        #[arg(long, value_enum, hide = true)]
+        scope: Option<CliScope>,
+        #[arg(long, value_name = "DIR")]
+        dest: Option<PathBuf>,
+        #[arg(long, value_name = "DIR")]
+        download_dir: Option<PathBuf>,
+        #[arg(long)]
+        disable_after_install: bool,
+        #[arg(long, value_enum, default_value_t = CliConflictPolicy::Block)]
+        conflict: CliConflictPolicy,
+    },
+    Local {
+        path: PathBuf,
+        #[arg(long, value_enum, default_value_t = CliTarget::Global)]
+        target: CliTarget,
+        #[arg(long, value_enum, hide = true)]
+        scope: Option<CliScope>,
+        #[arg(long, value_name = "DIR")]
+        dest: Option<PathBuf>,
+        #[arg(long)]
+        disable_after_install: bool,
+        #[arg(long, value_enum, default_value_t = CliConflictPolicy::Block)]
+        conflict: CliConflictPolicy,
     },
 }
 
@@ -245,6 +335,9 @@ impl CliCatalogFormat {
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum CommandOutput {
+    Workspace {
+        snapshot: WorkspaceSnapshot,
+    },
     Skills {
         skills: Vec<InstalledSkill>,
     },
@@ -295,6 +388,35 @@ enum CommandOutput {
     },
 }
 
+struct PreviewInstallArgs {
+    source: String,
+    local: bool,
+    target: CliTarget,
+    scope: Option<CliScope>,
+    dest: Option<PathBuf>,
+    download_dir: Option<PathBuf>,
+    conflict: CliConflictPolicy,
+}
+
+struct InstallUrlArgs {
+    url: String,
+    target: CliTarget,
+    scope: Option<CliScope>,
+    dest: Option<PathBuf>,
+    download_dir: Option<PathBuf>,
+    disable_after_install: bool,
+    conflict: CliConflictPolicy,
+}
+
+struct InstallLocalArgs {
+    path: PathBuf,
+    target: CliTarget,
+    scope: Option<CliScope>,
+    dest: Option<PathBuf>,
+    disable_after_install: bool,
+    conflict: CliConflictPolicy,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     init_tracing();
@@ -308,8 +430,9 @@ async fn main() -> Result<()> {
 
     let paths = ManagerPaths::new(project.map(ProjectRoot::new))?;
     let installer = Installer::new(paths.clone());
+    let command_name = command.name().to_string();
     let output_value = run_command(command, &paths, &installer).await?;
-    write_output(output, &output_value)?;
+    write_output(output, &command_name, &output_value)?;
 
     Ok(())
 }
@@ -320,6 +443,12 @@ async fn run_command(
     installer: &Installer,
 ) -> Result<CommandOutput> {
     match command {
+        Command::Workspace => {
+            let snapshot = WorkspaceSnapshot::load(paths)?;
+            Ok(CommandOutput::Workspace { snapshot })
+        }
+        Command::Inventory { command } => run_inventory_command(command, paths).await,
+        Command::Install { command } => run_install_command(command, paths, installer).await,
         Command::Scan => {
             let skills = scan_installed_skills(paths)?;
             Ok(CommandOutput::Skills { skills })
@@ -388,17 +517,20 @@ async fn run_command(
             download_dir,
             conflict,
         } => {
-            let install_target = install_target(target, scope, dest);
-            let preview = if local {
-                installer.preview(Path::new(&source), install_target, conflict.into())?
-            } else {
-                let downloaded =
-                    download_github_skills_to_cache(paths, &source, download_dir.as_deref())
-                        .await
-                        .with_context(|| format!("failed to download skills from {source}"))?;
-                installer.preview(&downloaded.search_root, install_target, conflict.into())?
-            };
-            Ok(CommandOutput::Preview { preview })
+            preview_install_command(
+                PreviewInstallArgs {
+                    source,
+                    local,
+                    target,
+                    scope,
+                    dest,
+                    download_dir,
+                    conflict,
+                },
+                paths,
+                installer,
+            )
+            .await
         }
         Command::InstallUrl {
             url,
@@ -409,17 +541,20 @@ async fn run_command(
             disable_after_install,
             conflict,
         } => {
-            let downloaded = download_github_skills_to_cache(paths, &url, download_dir.as_deref())
-                .await
-                .with_context(|| format!("failed to download skills from {url}"))?;
-            let result = installer.install(InstallRequest {
-                source_root: downloaded.search_root,
-                source_url: Some(url),
-                target: install_target(target, scope, dest),
-                conflict_policy: conflict.into(),
-                enable_after_install: !disable_after_install,
-            })?;
-            Ok(CommandOutput::Install { result })
+            install_url_command(
+                InstallUrlArgs {
+                    url,
+                    target,
+                    scope,
+                    dest,
+                    download_dir,
+                    disable_after_install,
+                    conflict,
+                },
+                paths,
+                installer,
+            )
+            .await
         }
         Command::InstallLocal {
             path,
@@ -428,16 +563,17 @@ async fn run_command(
             dest,
             disable_after_install,
             conflict,
-        } => {
-            let result = installer.install(InstallRequest {
-                source_root: path,
-                source_url: None,
-                target: install_target(target, scope, dest),
-                conflict_policy: conflict.into(),
-                enable_after_install: !disable_after_install,
-            })?;
-            Ok(CommandOutput::Install { result })
-        }
+        } => install_local_command(
+            InstallLocalArgs {
+                path,
+                target,
+                scope,
+                dest,
+                disable_after_install,
+                conflict,
+            },
+            installer,
+        ),
         Command::Downloads { command } => match command {
             DownloadCommand::Add { url, dir } => {
                 let downloaded = download_github_skills_to_cache(paths, &url, dir.as_deref())
@@ -489,19 +625,212 @@ async fn run_command(
     }
 }
 
-fn write_output(mode: OutputMode, output: &CommandOutput) -> Result<()> {
+async fn run_inventory_command(
+    command: InventoryCommand,
+    paths: &ManagerPaths,
+) -> Result<CommandOutput> {
+    match command {
+        InventoryCommand::Scan => {
+            let snapshot = WorkspaceSnapshot::load(paths)?;
+            Ok(CommandOutput::Workspace { snapshot })
+        }
+        InventoryCommand::Validate { target } => {
+            let mut skills = scan_installed_skills(paths)?;
+            if let Some(target) = target {
+                let scope = InstallTarget::from(target).scope();
+                skills.retain(|skill| skill.scope == scope);
+            }
+            let invalid = skills
+                .iter()
+                .filter(|skill| skill.health == SkillHealth::Invalid)
+                .count();
+            Ok(CommandOutput::Validation { skills, invalid })
+        }
+    }
+}
+
+async fn run_install_command(
+    command: InstallCommand,
+    paths: &ManagerPaths,
+    installer: &Installer,
+) -> Result<CommandOutput> {
+    match command {
+        InstallCommand::Preview {
+            source,
+            local,
+            target,
+            scope,
+            dest,
+            download_dir,
+            conflict,
+        } => {
+            preview_install_command(
+                PreviewInstallArgs {
+                    source,
+                    local,
+                    target,
+                    scope,
+                    dest,
+                    download_dir,
+                    conflict,
+                },
+                paths,
+                installer,
+            )
+            .await
+        }
+        InstallCommand::Url {
+            url,
+            target,
+            scope,
+            dest,
+            download_dir,
+            disable_after_install,
+            conflict,
+        } => {
+            install_url_command(
+                InstallUrlArgs {
+                    url,
+                    target,
+                    scope,
+                    dest,
+                    download_dir,
+                    disable_after_install,
+                    conflict,
+                },
+                paths,
+                installer,
+            )
+            .await
+        }
+        InstallCommand::Local {
+            path,
+            target,
+            scope,
+            dest,
+            disable_after_install,
+            conflict,
+        } => install_local_command(
+            InstallLocalArgs {
+                path,
+                target,
+                scope,
+                dest,
+                disable_after_install,
+                conflict,
+            },
+            installer,
+        ),
+    }
+}
+
+async fn preview_install_command(
+    args: PreviewInstallArgs,
+    paths: &ManagerPaths,
+    installer: &Installer,
+) -> Result<CommandOutput> {
+    let install_target = install_target(args.target, args.scope, args.dest);
+    let preview = if args.local {
+        installer.preview(
+            Path::new(&args.source),
+            install_target,
+            args.conflict.into(),
+        )?
+    } else {
+        let downloaded =
+            download_github_skills_to_cache(paths, &args.source, args.download_dir.as_deref())
+                .await
+                .with_context(|| format!("failed to download skills from {}", args.source))?;
+        installer.preview(
+            &downloaded.search_root,
+            install_target,
+            args.conflict.into(),
+        )?
+    };
+    Ok(CommandOutput::Preview { preview })
+}
+
+async fn install_url_command(
+    args: InstallUrlArgs,
+    paths: &ManagerPaths,
+    installer: &Installer,
+) -> Result<CommandOutput> {
+    let downloaded =
+        download_github_skills_to_cache(paths, &args.url, args.download_dir.as_deref())
+            .await
+            .with_context(|| format!("failed to download skills from {}", args.url))?;
+    let plan = installer.plan(InstallRequest {
+        source_root: downloaded.search_root,
+        source_url: Some(args.url),
+        target: install_target(args.target, args.scope, args.dest),
+        conflict_policy: args.conflict.into(),
+        enable_after_install: !args.disable_after_install,
+    })?;
+    let result = installer.install_plan(plan)?;
+    Ok(CommandOutput::Install { result })
+}
+
+fn install_local_command(args: InstallLocalArgs, installer: &Installer) -> Result<CommandOutput> {
+    let plan = installer.plan(InstallRequest {
+        source_root: args.path,
+        source_url: None,
+        target: install_target(args.target, args.scope, args.dest),
+        conflict_policy: args.conflict.into(),
+        enable_after_install: !args.disable_after_install,
+    })?;
+    let result = installer.install_plan(plan)?;
+    Ok(CommandOutput::Install { result })
+}
+
+fn write_output(mode: OutputMode, command: &str, output: &CommandOutput) -> Result<()> {
     match mode {
         OutputMode::Text => write_text_output(output),
         OutputMode::Json => {
-            serde_json::to_writer_pretty(std::io::stdout(), output)?;
+            serde_json::to_writer_pretty(
+                std::io::stdout(),
+                &OutputEnvelope::success(command, output),
+            )?;
             println!();
             Ok(())
         }
     }
 }
 
+#[derive(Debug, Serialize)]
+struct OutputEnvelope<'a> {
+    schema_version: u16,
+    command: &'a str,
+    status: &'a str,
+    data: &'a CommandOutput,
+    #[serde(flatten)]
+    legacy: &'a CommandOutput,
+    diagnostics: Vec<String>,
+}
+
+impl<'a> OutputEnvelope<'a> {
+    fn success(command: &'a str, data: &'a CommandOutput) -> Self {
+        Self {
+            schema_version: 2,
+            command,
+            status: "ok",
+            data,
+            legacy: data,
+            diagnostics: Vec::new(),
+        }
+    }
+}
+
 fn write_text_output(output: &CommandOutput) -> Result<()> {
     match output {
+        CommandOutput::Workspace { snapshot } => {
+            println!(
+                "Workspace: {} skill(s), {} download(s), {} target(s), {} exportable.",
+                snapshot.counts.total,
+                snapshot.downloads.len(),
+                snapshot.target_profiles.len(),
+                snapshot.counts.exportable
+            );
+        }
         CommandOutput::Skills { skills } => {
             if skills.is_empty() {
                 println!("No skills found.");

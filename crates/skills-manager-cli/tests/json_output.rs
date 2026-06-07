@@ -28,9 +28,42 @@ fn scan_supports_json_output() {
         String::from_utf8_lossy(&output.stderr)
     );
     let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["schema_version"], 2);
+    assert_eq!(json["command"], "scan");
+    assert_eq!(json["status"], "ok");
     assert_eq!(json["type"], "skills");
+    assert_eq!(json["data"]["type"], "skills");
     assert_eq!(json["skills"][0]["display_name"], "demo");
     assert_eq!(json["skills"][0]["scope"], "Project");
+}
+
+#[test]
+fn inventory_scan_returns_workspace_snapshot_envelope() {
+    let sandbox = tempdir().unwrap();
+    let project = sandbox.path().join("project");
+    write_skill(
+        &project,
+        "demo",
+        "---\nname: demo\ndescription: Demo skill for workspace output\n---\n",
+    );
+
+    let output = cli(sandbox.path())
+        .arg("--project")
+        .arg(&project)
+        .arg("--output")
+        .arg("json")
+        .arg("inventory")
+        .arg("scan")
+        .output()
+        .unwrap();
+
+    assert_success(&output);
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["schema_version"], 2);
+    assert_eq!(json["command"], "inventory");
+    assert_eq!(json["data"]["type"], "workspace");
+    assert_eq!(json["data"]["snapshot"]["counts"]["total"], 1);
+    assert_eq!(json["snapshot"]["counts"]["total"], 1);
 }
 
 #[test]

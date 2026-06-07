@@ -74,11 +74,7 @@ pub fn scan_installed_skills(paths: &ManagerPaths) -> Result<Vec<InstalledSkill>
         for candidate in discover_skill_candidates(&root)? {
             skills.push(read_installed_skill(
                 scope,
-                candidate.root_dir,
-                candidate.frontmatter,
-                candidate.diagnostics,
-                candidate.resource_count,
-                candidate.resource_bytes,
+                candidate,
                 &app_config,
                 &codex_config,
             )?);
@@ -101,28 +97,36 @@ pub fn scan_installed_skills(paths: &ManagerPaths) -> Result<Vec<InstalledSkill>
     Ok(skills)
 }
 
-pub fn read_installed_skill(
+fn read_installed_skill(
+    scope: SkillScope,
+    candidate: SkillCandidate,
+    app_config: &ManagerConfig,
+    codex_config: &CodexConfig,
+) -> Result<InstalledSkill> {
+    read_installed_skill_with_options(
+        InstalledSkillInput {
+            scope,
+            root_dir: candidate.root_dir,
+            frontmatter: candidate.frontmatter,
+            diagnostics: candidate.diagnostics,
+            resource_count: candidate.resource_count,
+            resource_bytes: candidate.resource_bytes,
+        },
+        app_config,
+        codex_config,
+        None,
+        &[],
+    )
+}
+
+#[derive(Debug)]
+struct InstalledSkillInput {
     scope: SkillScope,
     root_dir: PathBuf,
     frontmatter: SkillFrontmatter,
     diagnostics: Vec<SkillDiagnostic>,
     resource_count: usize,
     resource_bytes: u64,
-    app_config: &ManagerConfig,
-    codex_config: &CodexConfig,
-) -> Result<InstalledSkill> {
-    read_installed_skill_with_options(
-        scope,
-        root_dir,
-        frontmatter,
-        diagnostics,
-        resource_count,
-        resource_bytes,
-        app_config,
-        codex_config,
-        None,
-        &[],
-    )
 }
 
 fn read_disabled_installed_skill(
@@ -134,12 +138,14 @@ fn read_disabled_installed_skill(
 ) -> Result<InstalledSkill> {
     let enabled_root = enabled_root_for_disabled_root(skills_root, &candidate.root_dir);
     read_installed_skill_with_options(
-        scope,
-        candidate.root_dir,
-        candidate.frontmatter,
-        candidate.diagnostics,
-        candidate.resource_count,
-        candidate.resource_bytes,
+        InstalledSkillInput {
+            scope,
+            root_dir: candidate.root_dir,
+            frontmatter: candidate.frontmatter,
+            diagnostics: candidate.diagnostics,
+            resource_count: candidate.resource_count,
+            resource_bytes: candidate.resource_bytes,
+        },
         app_config,
         codex_config,
         Some(SkillEnablement::Disabled),
@@ -148,17 +154,20 @@ fn read_disabled_installed_skill(
 }
 
 fn read_installed_skill_with_options(
-    scope: SkillScope,
-    root_dir: PathBuf,
-    frontmatter: SkillFrontmatter,
-    mut diagnostics: Vec<SkillDiagnostic>,
-    resource_count: usize,
-    resource_bytes: u64,
+    input: InstalledSkillInput,
     app_config: &ManagerConfig,
     codex_config: &CodexConfig,
     enablement_override: Option<SkillEnablement>,
     metadata_fallback_roots: &[PathBuf],
 ) -> Result<InstalledSkill> {
+    let InstalledSkillInput {
+        scope,
+        root_dir,
+        frontmatter,
+        mut diagnostics,
+        resource_count,
+        resource_bytes,
+    } = input;
     let skill_file = root_dir.join("SKILL.md");
     if !skill_file.exists() {
         return Err(SkillsManagerError::MissingSkillFile(root_dir));
@@ -857,7 +866,7 @@ mod tests {
 
     #[test]
     fn visible_skill_scopes_groups_enabled_targets_by_skill_identity() {
-        let skills = vec![
+        let skills = [
             installed_skill(SkillScope::Global, "demo-skill", SkillEnablement::Enabled),
             installed_skill(SkillScope::Codex, "demo-skill", SkillEnablement::Disabled),
             installed_skill(SkillScope::Zed, "demo-skill", SkillEnablement::Enabled),

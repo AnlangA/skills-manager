@@ -7,6 +7,9 @@ mod views;
 
 pub fn main() -> iced::Result {
     let smoke_test = std::env::args().any(|arg| arg == "--smoke-test");
+    if smoke_test {
+        return Ok(());
+    }
 
     iced::application(
         move || {

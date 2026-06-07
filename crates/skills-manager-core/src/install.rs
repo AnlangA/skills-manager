@@ -14,6 +14,7 @@ use crate::{
     SkillScope, SkillsManagerError,
     codex_config::CodexConfig,
     discover_skill_candidates,
+    operation::{OperationJournal, OperationPlan, rollback_on_error},
     skill::{
         LEGACY_DISABLED_SKILLS_DIR, SkillCandidate, disabled_store_root_for_skills_root,
         health_from_diagnostics, path_key, sanitize_folder_name, unique_folder_name,
@@ -28,7 +29,7 @@ pub enum ConflictPolicy {
     Rename,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum InstallTarget {
     Global,
     #[allow(dead_code)]
@@ -103,7 +104,7 @@ impl From<SkillScope> for InstallTarget {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct InstallRequest {
     pub source_root: PathBuf,
     pub source_url: Option<String>,
@@ -129,6 +130,8 @@ pub struct InstallPreview {
     pub scope: SkillScope,
     pub destination_root: PathBuf,
     pub candidates: Vec<InstallCandidate>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_plan: Option<OperationPlan>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -170,24 +173,36 @@ impl Installer {
         target: InstallTarget,
         conflict_policy: ConflictPolicy,
     ) -> Result<InstallPreview> {
+        let plan = self.plan(InstallRequest {
+            source_root: source_root.to_path_buf(),
+            source_url: None,
+            target,
+            conflict_policy,
+            enable_after_install: true,
+        })?;
+
+        Ok(plan.preview())
+    }
+
+    pub fn plan(&self, request: InstallRequest) -> Result<OperationPlan> {
         info!(
-            source_root = %source_root.display(),
-            target = target.label(),
-            ?conflict_policy,
+            source_root = %request.source_root.display(),
+            target = request.target.label(),
+            ?request.conflict_policy,
             "building install preview"
         );
-        let scope = target.scope();
-        let destination_root = self.destination_for_target(&target)?;
+        let scope = request.target.scope();
+        let destination_root = self.destination_for_target(&request.target)?;
         let mut claimed = HashMap::new();
         let mut candidates = Vec::new();
 
-        for candidate in discover_skill_candidates(source_root)? {
+        for candidate in discover_skill_candidates(&request.source_root)? {
             let preferred_name = preferred_folder_name(&candidate);
             let destination = plan_destination(
                 &destination_root,
                 &preferred_name,
                 &mut claimed,
-                conflict_policy,
+                request.conflict_policy,
             );
             let mut diagnostics = candidate.diagnostics;
             diagnostics.extend(target_specific_diagnostics(
@@ -197,6 +212,15 @@ impl Installer {
                 candidate.resource_count,
                 candidate.resource_bytes,
             ));
+            if !request.enable_after_install && scope != SkillScope::Codex {
+                let disabled_root = disabled_root_for_enabled_root(&destination.path);
+                if disabled_root.exists() {
+                    diagnostics.push(SkillDiagnostic::invalid(format!(
+                        "Disabled destination already exists: {}",
+                        disabled_root.display()
+                    )));
+                }
+            }
             let health = health_from_diagnostics(&diagnostics, false);
 
             candidates.push(InstallCandidate {
@@ -213,38 +237,54 @@ impl Installer {
 
         if candidates.is_empty() {
             warn!(
-                source_root = %source_root.display(),
+                source_root = %request.source_root.display(),
                 "install preview found no skill candidates"
             );
             return Err(SkillsManagerError::NoSkillsFound);
         }
 
         info!(
-            source_root = %source_root.display(),
+            source_root = %request.source_root.display(),
             destination_root = %destination_root.display(),
             candidates = candidates.len(),
             "built install preview"
         );
-        Ok(InstallPreview {
+        Ok(OperationPlan::new(
+            request,
             scope,
             destination_root,
             candidates,
-        })
+        ))
     }
 
     pub fn install(&self, request: InstallRequest) -> Result<InstallResult> {
+        let plan = self.plan(request)?;
+        self.install_plan(plan)
+    }
+
+    pub fn install_plan(&self, plan: OperationPlan) -> Result<InstallResult> {
         info!(
-            source_root = %request.source_root.display(),
-            target = request.target.label(),
-            ?request.conflict_policy,
-            enable_after_install = request.enable_after_install,
+            source_root = %plan.request.source_root.display(),
+            target = plan.request.target.label(),
+            ?plan.request.conflict_policy,
+            enable_after_install = plan.request.enable_after_install,
             "installing skills"
         );
-        let destination_root = self.destination_for_target(&request.target)?;
+        let mut journal = OperationJournal::default();
+        let result = self.install_plan_inner(plan, &mut journal);
+        rollback_on_error(&mut journal, result)
+    }
+
+    fn install_plan_inner(
+        &self,
+        plan: OperationPlan,
+        journal: &mut OperationJournal,
+    ) -> Result<InstallResult> {
+        let request = plan.request;
+        let destination_root = plan.destination_root;
         fs::create_dir_all(&destination_root)?;
 
-        let candidates = discover_skill_candidates(&request.source_root)?;
-        if candidates.is_empty() {
+        if plan.candidates.is_empty() {
             warn!(
                 source_root = %request.source_root.display(),
                 "install found no skill candidates"
@@ -260,67 +300,64 @@ impl Installer {
         }
         let mut installed = Vec::new();
         let mut backups = Vec::new();
-        let mut claimed = HashMap::new();
 
-        for candidate in candidates {
-            let preferred_name = preferred_folder_name(&candidate);
-            let destination = plan_destination(
-                &destination_root,
-                &preferred_name,
-                &mut claimed,
-                request.conflict_policy,
-            );
+        for candidate in plan.candidates {
+            let destination_path = candidate.destination_root.clone();
+            let conflict = destination_path.exists();
 
-            if destination.conflict {
+            if conflict {
                 match request.conflict_policy {
                     ConflictPolicy::Block => {
                         warn!(
-                            destination = %destination.path.display(),
+                            destination = %destination_path.display(),
                             "blocking install because destination exists"
                         );
-                        return Err(SkillsManagerError::DestinationExists(destination.path));
+                        return Err(SkillsManagerError::DestinationExists(destination_path));
                     }
                     ConflictPolicy::Rename => {}
                     ConflictPolicy::Replace => {
-                        let backup = backup_path(&destination.path);
+                        let backup = backup_path(&destination_path);
                         info!(
-                            destination = %destination.path.display(),
+                            destination = %destination_path.display(),
                             backup = %backup.display(),
                             "backing up existing skill before replace"
                         );
-                        fs::rename(&destination.path, &backup)?;
+                        fs::rename(&destination_path, &backup)?;
+                        journal.record_move(destination_path.clone(), backup.clone());
                         backups.push(backup);
                     }
                 }
             }
 
             if !request.enable_after_install && target_scope != SkillScope::Codex {
-                let disabled_root = disabled_root_for_enabled_root(&destination.path);
+                let disabled_root = disabled_root_for_enabled_root(&destination_path);
                 if disabled_root.exists() {
                     return Err(SkillsManagerError::DestinationExists(disabled_root));
                 }
             }
 
             debug!(
-                source = %candidate.root_dir.display(),
-                destination = %destination.path.display(),
+                source = %candidate.source_root.display(),
+                destination = %destination_path.display(),
                 "copying skill folder"
             );
-            copy_skill_folder(&candidate.root_dir, &destination.path)?;
-            let skill_file = destination.path.join("SKILL.md");
+            copy_skill_folder(&candidate.source_root, &destination_path)?;
+            journal.record_created(destination_path.clone());
+            let skill_file = destination_path.join("SKILL.md");
             if target_scope == SkillScope::Codex {
-                config.record_install(&destination.path, request.source_url.clone());
+                config.record_install(&destination_path, request.source_url.clone());
                 config.set_disabled(&skill_file, !request.enable_after_install);
                 codex_config.set_enabled(&skill_file, request.enable_after_install);
-                installed.push(destination.path);
+                installed.push(destination_path);
             } else {
                 codex_config.forget(&skill_file);
                 if request.enable_after_install {
-                    config.record_install(&destination.path, request.source_url.clone());
+                    config.record_install(&destination_path, request.source_url.clone());
                     config.set_disabled(&skill_file, false);
-                    installed.push(destination.path);
+                    installed.push(destination_path);
                 } else {
-                    let disabled_root = move_enabled_root_to_disabled(&destination.path)?;
+                    let disabled_root = move_enabled_root_to_disabled(&destination_path)?;
+                    journal.record_created(disabled_root.clone());
                     config.record_install(&disabled_root, request.source_url.clone());
                     config.set_disabled(&skill_file, false);
                     config.set_disabled(&disabled_root.join("SKILL.md"), true);
@@ -355,6 +392,8 @@ impl Installer {
 
         let backup = backup_path(&actual_root);
         fs::rename(&actual_root, &backup)?;
+        let mut journal = OperationJournal::default();
+        journal.record_move(actual_root.clone(), backup.clone());
 
         let mut config = ManagerConfig::load(&self.paths)?;
         let mut codex_config = CodexConfig::load(&self.paths)?;
@@ -364,11 +403,11 @@ impl Installer {
             &location.legacy_disabled_root,
             &location.legacy_disabled_skill_file,
         );
-        config.save(&self.paths)?;
         codex_config.forget(&location.enabled_skill_file);
         codex_config.forget(&location.disabled_skill_file);
         codex_config.forget(&location.legacy_disabled_skill_file);
-        codex_config.save()?;
+        let save_result = config.save(&self.paths).and_then(|_| codex_config.save());
+        rollback_on_error(&mut journal, save_result)?;
 
         info!(
             skill_root = %actual_root.display(),
@@ -796,6 +835,43 @@ mod tests {
 
         assert_eq!(result.installed.len(), 1);
         assert!(project.join(".agents/skills/demo/SKILL.md").exists());
+    }
+
+    #[test]
+    fn operation_plan_can_be_applied_without_repreviewing() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source/demo");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(
+            source.join("SKILL.md"),
+            "---\nname: demo\ndescription: Demo skill plan apply\n---\n",
+        )
+        .unwrap();
+
+        let paths = ManagerPaths::with_home(
+            dir.path().join("home"),
+            dir.path().join("data"),
+            dir.path().join("config"),
+            Some(ProjectRoot::new(dir.path().join("project"))),
+        );
+        let installer = Installer::new(paths.clone());
+        let plan = installer
+            .plan(InstallRequest {
+                source_root: dir.path().join("source"),
+                source_url: Some("fixture".to_string()),
+                target: InstallTarget::Global,
+                conflict_policy: ConflictPolicy::Block,
+                enable_after_install: false,
+            })
+            .unwrap();
+
+        assert_eq!(plan.candidates.len(), 1);
+        assert!(!plan.request.enable_after_install);
+        let result = installer.install_plan(plan).unwrap();
+
+        assert_eq!(result.installed.len(), 1);
+        assert!(result.installed[0].join("SKILL.md").exists());
+        assert!(result.installed[0].starts_with(dir.path().join("home/.agents/.skills-disabled")));
     }
 
     #[test]

@@ -134,10 +134,10 @@ pub fn create_skill_scaffold(
     fs::write(&preview.skill_file, &preview.content)?;
 
     let mut config = ManagerConfig::load(paths)?;
-    if preview.scope == crate::SkillScope::Custom {
-        if let Some(root) = preview.destination_root.parent() {
-            config.record_custom_install_root(root);
-        }
+    if preview.scope == crate::SkillScope::Custom
+        && let Some(root) = preview.destination_root.parent()
+    {
+        config.record_custom_install_root(root);
     }
     config.record_install(&preview.destination_root, None);
     config.set_disabled(&preview.skill_file, false);

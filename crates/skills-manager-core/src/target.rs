@@ -203,6 +203,14 @@ pub fn target_profiles(paths: &ManagerPaths) -> Result<Vec<TargetProfile>> {
 pub fn doctor_report(paths: &ManagerPaths) -> Result<DoctorReport> {
     let profiles = target_profiles(paths)?;
     let skills = scan_installed_skills(paths)?;
+    doctor_report_for_skills(paths, profiles, &skills)
+}
+
+pub fn doctor_report_for_skills(
+    paths: &ManagerPaths,
+    profiles: Vec<TargetProfile>,
+    skills: &[InstalledSkill],
+) -> Result<DoctorReport> {
     let codex_config = CodexConfig::load(paths)?;
     let mut targets = Vec::new();
 
@@ -224,14 +232,14 @@ pub fn doctor_report(paths: &ManagerPaths) -> Result<DoctorReport> {
         } else {
             None
         };
-        if let (Some(bytes), Some(budget)) = (catalog_bytes, profile.catalog_budget_bytes) {
-            if bytes > budget {
-                diagnostics.push(SkillDiagnostic::invalid(format!(
-                    "Zed catalog estimate is {} but the budget is {}",
-                    format_bytes(bytes),
-                    format_bytes(budget)
-                )));
-            }
+        if let (Some(bytes), Some(budget)) = (catalog_bytes, profile.catalog_budget_bytes)
+            && bytes > budget
+        {
+            diagnostics.push(SkillDiagnostic::invalid(format!(
+                "Zed catalog estimate is {} but the budget is {}",
+                format_bytes(bytes),
+                format_bytes(budget)
+            )));
         }
 
         targets.push(TargetDoctorReport {
@@ -437,31 +445,31 @@ fn inspect_target_storage(
     }
 
     if profile.enablement_strategy == EnablementStrategy::DirectoryMove {
-        if let Some(disabled_root) = &profile.disabled_store_root {
-            if disabled_root.starts_with(root) {
-                diagnostics.push(SkillDiagnostic::invalid(format!(
-                    "Disabled store is inside the scan root: {}",
-                    disabled_root.display()
-                )));
-            }
+        if let Some(disabled_root) = &profile.disabled_store_root
+            && disabled_root.starts_with(root)
+        {
+            diagnostics.push(SkillDiagnostic::invalid(format!(
+                "Disabled store is inside the scan root: {}",
+                disabled_root.display()
+            )));
         }
 
-        if let Some(legacy_root) = &profile.legacy_disabled_store_root {
-            if legacy_root.exists() {
-                let legacy_count = discover_skill_candidates(legacy_root)?.len();
-                if legacy_count > 0 {
-                    diagnostics.push(SkillDiagnostic::warning(format!(
-                        "{legacy_count} legacy disabled skill(s) remain under {}",
+        if let Some(legacy_root) = &profile.legacy_disabled_store_root
+            && legacy_root.exists()
+        {
+            let legacy_count = discover_skill_candidates(legacy_root)?.len();
+            if legacy_count > 0 {
+                diagnostics.push(SkillDiagnostic::warning(format!(
+                    "{legacy_count} legacy disabled skill(s) remain under {}",
+                    legacy_root.display()
+                )));
+                repair_actions.push(DoctorRepairAction {
+                    label: "Migrate legacy disabled store".to_string(),
+                    description: format!(
+                        "Move skills from {} to the sibling .skills-disabled store.",
                         legacy_root.display()
-                    )));
-                    repair_actions.push(DoctorRepairAction {
-                        label: "Migrate legacy disabled store".to_string(),
-                        description: format!(
-                            "Move skills from {} to the sibling .skills-disabled store.",
-                            legacy_root.display()
-                        ),
-                    });
-                }
+                    ),
+                });
             }
         }
     }

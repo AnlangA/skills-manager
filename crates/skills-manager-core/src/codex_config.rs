@@ -5,7 +5,7 @@ use std::{
 
 use toml_edit::{ArrayOfTables, DocumentMut, Item, Value};
 
-use crate::{ManagerPaths, Result, SkillsManagerError, skill::path_key};
+use crate::{ManagerPaths, Result, SkillsManagerError, fs_ops::atomic_write, skill::path_key};
 
 #[derive(Debug, Clone)]
 pub struct CodexConfig {
@@ -44,7 +44,7 @@ impl CodexConfig {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(&self.path, self.document.to_string())?;
+        atomic_write(&self.path, self.document.to_string())?;
         Ok(())
     }
 

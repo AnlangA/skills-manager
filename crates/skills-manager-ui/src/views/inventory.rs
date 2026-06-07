@@ -87,7 +87,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
 
     let list = components::panel(
         column![
-            components::section_header("Inventory", format!("{} matching", visible.len())),
+            components::section_header("Library", format!("{} matching", visible.len())),
             filters,
             table_header(app),
             scrollable(skill_list(app, &visible)).height(Length::Fill),
