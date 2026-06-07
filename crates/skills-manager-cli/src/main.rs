@@ -2,17 +2,19 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use serde::Serialize;
 use skills_manager_core::{
-    CatalogFormat, ConflictPolicy, DoctorReport, DownloadedSkillEntry, InstallPreview,
-    InstallRequest, InstallResult, InstallTarget, InstalledSkill, Installer, ManagerPaths,
-    ProjectRoot, RepairReport, SkillCatalog, SkillHealth, SkillScaffoldPreview,
-    SkillScaffoldRequest, TargetProfile, WorkspaceSnapshot, create_skill_scaffold, doctor_report,
-    download_github_catalog, download_github_skills_to_cache, export_installed_catalog,
-    format_bytes, list_downloaded_skills, preview_skill_scaffold, remove_downloaded_skills,
-    repair_targets, scan_installed_skills, target_profiles,
+    CatalogFormat, ConflictPolicy, InstallRequest, InstallTarget, Installer, ManagerPaths,
+    ProjectRoot, SkillHealth, SkillScaffoldRequest, WorkspaceSnapshot, create_skill_scaffold,
+    doctor_report, download_github_catalog, download_github_skills,
+    download_github_skills_to_cache, export_installed_catalog, list_downloaded_skills,
+    preview_skill_scaffold, remove_downloaded_skills, repair_targets, scan_installed_skills,
+    target_profiles,
 };
 use tracing_subscriber::EnvFilter;
+
+mod output;
+
+use output::{CommandOutput, OutputMode, write_output};
 
 #[derive(Debug, Parser)]
 #[command(version, about = "Manage local Agent Skills libraries")]
@@ -25,12 +27,6 @@ struct Cli {
 
     #[command(subcommand)]
     command: Command,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum OutputMode {
-    Text,
-    Json,
 }
 
 #[derive(Debug, Subcommand)]
@@ -332,62 +328,6 @@ impl CliCatalogFormat {
     }
 }
 
-#[derive(Debug, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum CommandOutput {
-    Workspace {
-        snapshot: WorkspaceSnapshot,
-    },
-    Skills {
-        skills: Vec<InstalledSkill>,
-    },
-    Validation {
-        skills: Vec<InstalledSkill>,
-        invalid: usize,
-    },
-    Targets {
-        targets: Vec<TargetProfile>,
-    },
-    Doctor {
-        report: DoctorReport,
-    },
-    Repair {
-        report: RepairReport,
-    },
-    Scaffold {
-        dry_run: bool,
-        preview: SkillScaffoldPreview,
-    },
-    Preview {
-        preview: InstallPreview,
-    },
-    Install {
-        result: InstallResult,
-    },
-    Download {
-        entry: DownloadedSkillEntry,
-    },
-    Downloads {
-        downloads: Vec<DownloadedSkillEntry>,
-    },
-    RemovedDownload {
-        path: PathBuf,
-    },
-    CatalogExport {
-        format: String,
-        catalog: String,
-    },
-    LoadedCatalog {
-        catalog: SkillCatalog,
-    },
-    Status {
-        message: String,
-    },
-    RemovedSkill {
-        backup: PathBuf,
-    },
-}
-
 struct PreviewInstallArgs {
     source: String,
     local: bool,
@@ -453,18 +393,7 @@ async fn run_command(
             let skills = scan_installed_skills(paths)?;
             Ok(CommandOutput::Skills { skills })
         }
-        Command::Validate { target } => {
-            let mut skills = scan_installed_skills(paths)?;
-            if let Some(target) = target {
-                let scope = InstallTarget::from(target).scope();
-                skills.retain(|skill| skill.scope == scope);
-            }
-            let invalid = skills
-                .iter()
-                .filter(|skill| skill.health == SkillHealth::Invalid)
-                .count();
-            Ok(CommandOutput::Validation { skills, invalid })
-        }
+        Command::Validate { target } => validation_output(paths, target),
         Command::Targets => {
             let targets = target_profiles(paths)?;
             Ok(CommandOutput::Targets { targets })
@@ -527,7 +456,6 @@ async fn run_command(
                     download_dir,
                     conflict,
                 },
-                paths,
                 installer,
             )
             .await
@@ -634,18 +562,7 @@ async fn run_inventory_command(
             let snapshot = WorkspaceSnapshot::load(paths)?;
             Ok(CommandOutput::Workspace { snapshot })
         }
-        InventoryCommand::Validate { target } => {
-            let mut skills = scan_installed_skills(paths)?;
-            if let Some(target) = target {
-                let scope = InstallTarget::from(target).scope();
-                skills.retain(|skill| skill.scope == scope);
-            }
-            let invalid = skills
-                .iter()
-                .filter(|skill| skill.health == SkillHealth::Invalid)
-                .count();
-            Ok(CommandOutput::Validation { skills, invalid })
-        }
+        InventoryCommand::Validate { target } => validation_output(paths, target),
     }
 }
 
@@ -674,7 +591,6 @@ async fn run_install_command(
                     download_dir,
                     conflict,
                 },
-                paths,
                 installer,
             )
             .await
@@ -726,10 +642,10 @@ async fn run_install_command(
 
 async fn preview_install_command(
     args: PreviewInstallArgs,
-    paths: &ManagerPaths,
     installer: &Installer,
 ) -> Result<CommandOutput> {
     let install_target = install_target(args.target, args.scope, args.dest);
+    let _download_dir = args.download_dir;
     let preview = if args.local {
         installer.preview(
             Path::new(&args.source),
@@ -737,17 +653,34 @@ async fn preview_install_command(
             args.conflict.into(),
         )?
     } else {
-        let downloaded =
-            download_github_skills_to_cache(paths, &args.source, args.download_dir.as_deref())
-                .await
-                .with_context(|| format!("failed to download skills from {}", args.source))?;
-        installer.preview(
-            &downloaded.search_root,
-            install_target,
-            args.conflict.into(),
-        )?
+        let downloaded = download_github_skills(&args.source)
+            .await
+            .with_context(|| format!("failed to download skills from {}", args.source))?;
+        let plan = installer.plan(InstallRequest {
+            source_root: downloaded.search_root,
+            source_url: Some(args.source),
+            target: install_target,
+            conflict_policy: args.conflict.into(),
+            enable_after_install: true,
+        })?;
+        let mut preview = plan.preview();
+        preview.operation_plan = None;
+        preview
     };
     Ok(CommandOutput::Preview { preview })
+}
+
+fn validation_output(paths: &ManagerPaths, target: Option<CliTarget>) -> Result<CommandOutput> {
+    let mut skills = scan_installed_skills(paths)?;
+    if let Some(target) = target {
+        let scope = InstallTarget::from(target).scope();
+        skills.retain(|skill| skill.scope == scope);
+    }
+    let invalid = skills
+        .iter()
+        .filter(|skill| skill.health == SkillHealth::Invalid)
+        .count();
+    Ok(CommandOutput::Validation { skills, invalid })
 }
 
 async fn install_url_command(
@@ -782,266 +715,6 @@ fn install_local_command(args: InstallLocalArgs, installer: &Installer) -> Resul
     Ok(CommandOutput::Install { result })
 }
 
-fn write_output(mode: OutputMode, command: &str, output: &CommandOutput) -> Result<()> {
-    match mode {
-        OutputMode::Text => write_text_output(output),
-        OutputMode::Json => {
-            serde_json::to_writer_pretty(
-                std::io::stdout(),
-                &OutputEnvelope::success(command, output),
-            )?;
-            println!();
-            Ok(())
-        }
-    }
-}
-
-#[derive(Debug, Serialize)]
-struct OutputEnvelope<'a> {
-    schema_version: u16,
-    command: &'a str,
-    status: &'a str,
-    data: &'a CommandOutput,
-    #[serde(flatten)]
-    legacy: &'a CommandOutput,
-    diagnostics: Vec<String>,
-}
-
-impl<'a> OutputEnvelope<'a> {
-    fn success(command: &'a str, data: &'a CommandOutput) -> Self {
-        Self {
-            schema_version: 2,
-            command,
-            status: "ok",
-            data,
-            legacy: data,
-            diagnostics: Vec::new(),
-        }
-    }
-}
-
-fn write_text_output(output: &CommandOutput) -> Result<()> {
-    match output {
-        CommandOutput::Workspace { snapshot } => {
-            println!(
-                "Workspace: {} skill(s), {} download(s), {} target(s), {} exportable.",
-                snapshot.counts.total,
-                snapshot.downloads.len(),
-                snapshot.target_profiles.len(),
-                snapshot.counts.exportable
-            );
-        }
-        CommandOutput::Skills { skills } => {
-            if skills.is_empty() {
-                println!("No skills found.");
-            }
-
-            for skill in skills {
-                print_skill_line(skill);
-            }
-        }
-        CommandOutput::Validation { skills, invalid } => {
-            if skills.is_empty() {
-                println!("No skills found.");
-            }
-
-            for skill in skills {
-                print_skill_line(skill);
-                for diagnostic in &skill.diagnostics {
-                    println!(
-                        "  - {}: {}",
-                        diagnostic.severity.label(),
-                        diagnostic.message
-                    );
-                }
-            }
-
-            if *invalid > 0 {
-                println!("{invalid} invalid skill(s) found.");
-            } else {
-                println!("All scanned skills are usable.");
-            }
-        }
-        CommandOutput::Targets { targets } => {
-            for target in targets {
-                println!(
-                    "{} [{}] root: {} | disabled: {} | strategy: {:?}",
-                    target.label,
-                    target.scope.id_prefix(),
-                    target
-                        .skills_root
-                        .as_ref()
-                        .map(|path| path.display().to_string())
-                        .unwrap_or_else(|| "unavailable".to_string()),
-                    target
-                        .disabled_store_root
-                        .as_ref()
-                        .map(|path| path.display().to_string())
-                        .unwrap_or_else(|| "config toggle".to_string()),
-                    target.enablement_strategy
-                );
-            }
-        }
-        CommandOutput::Doctor { report } => {
-            println!(
-                "Doctor: {} target(s), {} skill(s), {} invalid, {} repair action(s).",
-                report.summary.targets,
-                report.summary.skills,
-                report.summary.invalid,
-                report.summary.repair_actions
-            );
-            for target in &report.targets {
-                println!(
-                    "- {}: {} total / {} usable / {} disabled / {} invalid",
-                    target.profile.label,
-                    target.counts.total,
-                    target.counts.usable,
-                    target.counts.disabled,
-                    target.counts.invalid
-                );
-                if let Some(bytes) = target.catalog_bytes {
-                    println!("  catalog: {}", format_bytes(bytes));
-                }
-                for diagnostic in &target.diagnostics {
-                    println!(
-                        "  - {}: {}",
-                        diagnostic.severity.label(),
-                        diagnostic.message
-                    );
-                }
-                for action in &target.repair_actions {
-                    println!("  repair: {} - {}", action.label, action.description);
-                }
-            }
-        }
-        CommandOutput::Repair { report } => {
-            let mode = if report.dry_run {
-                "Repair dry-run"
-            } else {
-                "Repair"
-            };
-            println!("{mode}: {} action(s).", report.actions.len());
-            for action in &report.actions {
-                println!(
-                    "- {}: {}{}",
-                    action.label,
-                    action.message,
-                    if action.applied { " [applied]" } else { "" }
-                );
-            }
-        }
-        CommandOutput::Scaffold { dry_run, preview } => {
-            let verb = if *dry_run { "Would create" } else { "Created" };
-            println!(
-                "{verb}: {} [{}] at {}",
-                preview
-                    .frontmatter
-                    .name
-                    .as_deref()
-                    .unwrap_or("unnamed skill"),
-                preview.scope.label(),
-                preview.destination_root.display()
-            );
-            println!("Skill file: {}", preview.skill_file.display());
-            for diagnostic in &preview.diagnostics {
-                println!(
-                    "  - {}: {}",
-                    diagnostic.severity.label(),
-                    diagnostic.message
-                );
-            }
-        }
-        CommandOutput::Preview { preview } => print_preview(preview),
-        CommandOutput::Install { result } => print_install_result(result),
-        CommandOutput::Download { entry } => print_downloaded_entry(entry),
-        CommandOutput::Downloads { downloads } => {
-            if downloads.is_empty() {
-                println!("No downloaded skills found.");
-            }
-            for entry in downloads {
-                print_downloaded_entry(entry);
-            }
-        }
-        CommandOutput::RemovedDownload { path } => {
-            println!("Removed downloaded skills: {}", path.display());
-        }
-        CommandOutput::CatalogExport { catalog, .. } => {
-            print!("{catalog}");
-        }
-        CommandOutput::LoadedCatalog { catalog } => {
-            println!(
-                "Catalog: {}",
-                catalog.name.as_deref().unwrap_or("Unnamed catalog")
-            );
-            for skill in &catalog.skills {
-                println!(
-                    "- {}: {}",
-                    skill.display_name.as_deref().unwrap_or(&skill.name),
-                    skill.description.as_deref().unwrap_or("No description")
-                );
-            }
-        }
-        CommandOutput::Status { message } => {
-            println!("{message}");
-        }
-        CommandOutput::RemovedSkill { backup } => {
-            println!("Removed skill. Backup: {}", backup.display());
-        }
-    }
-
-    Ok(())
-}
-
-fn print_skill_line(skill: &InstalledSkill) {
-    println!(
-        "{} [{}] {} / {} - {} | resources: {} ({}) | source: {} | installed: {}",
-        skill.display_name,
-        skill.scope.label(),
-        skill.enablement.label(),
-        skill.health.label(),
-        skill.root_dir.display(),
-        skill.resource_count,
-        format_bytes(skill.resource_bytes),
-        skill.source_url.as_deref().unwrap_or("unknown"),
-        skill
-            .installed_at
-            .map(|time| time.to_rfc3339())
-            .unwrap_or_else(|| "unknown".to_string())
-    );
-}
-
-fn print_preview(preview: &InstallPreview) {
-    println!(
-        "Preview: {} candidate(s) for {} scope at {}",
-        preview.candidates.len(),
-        preview.scope.label(),
-        preview.destination_root.display()
-    );
-    for candidate in &preview.candidates {
-        let name = candidate
-            .frontmatter
-            .name
-            .as_deref()
-            .unwrap_or("unnamed skill");
-        println!(
-            "- {name}: {} -> {} | conflict: {} | health: {} | resources: {} ({})",
-            candidate.source_root.display(),
-            candidate.destination_root.display(),
-            candidate.conflict,
-            candidate.health.label(),
-            candidate.resource_count,
-            format_bytes(candidate.resource_bytes)
-        );
-        for diagnostic in &candidate.diagnostics {
-            println!(
-                "  - {}: {}",
-                diagnostic.severity.label(),
-                diagnostic.message
-            );
-        }
-    }
-}
-
 fn install_target(
     target: CliTarget,
     legacy_scope: Option<CliScope>,
@@ -1052,26 +725,6 @@ fn install_target(
     }
 
     legacy_scope.map(CliTarget::from).unwrap_or(target).into()
-}
-
-fn print_install_result(result: &InstallResult) {
-    for path in &result.installed {
-        println!("Installed: {}", path.display());
-    }
-    for backup in &result.backups {
-        println!("Backup: {}", backup.display());
-    }
-}
-
-fn print_downloaded_entry(entry: &DownloadedSkillEntry) {
-    println!(
-        "Downloaded: {} | source: {} | root: {} | search: {} | {}",
-        entry.id,
-        entry.source_url,
-        entry.root_dir.display(),
-        entry.search_root.display(),
-        entry.resource_summary()
-    );
 }
 
 fn skill_root(paths: &ManagerPaths, target: Option<CliTarget>, path: PathBuf) -> Result<PathBuf> {

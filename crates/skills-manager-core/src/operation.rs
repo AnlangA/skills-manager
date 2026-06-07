@@ -3,7 +3,9 @@ use std::{fs, path::PathBuf};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-use crate::{InstallCandidate, InstallPreview, InstallRequest, Result, SkillScope};
+use crate::{
+    InstallCandidate, InstallPreview, InstallRequest, Result, SkillScope, SkillsManagerError,
+};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct OperationPlan {
@@ -90,9 +92,46 @@ impl OperationJournal {
 }
 
 pub(crate) fn rollback_on_error<T>(journal: &mut OperationJournal, result: Result<T>) -> Result<T> {
-    if result.is_err() {
-        let _ = journal.rollback();
+    match result {
+        Ok(value) => Ok(value),
+        Err(error) => {
+            let failures = journal.rollback();
+            if failures.is_empty() {
+                Err(error)
+            } else {
+                Err(SkillsManagerError::RollbackFailed {
+                    source: Box::new(error),
+                    failures: failures.join("; "),
+                })
+            }
+        }
     }
+}
 
-    result
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::tempdir;
+
+    use super::*;
+
+    #[test]
+    fn rollback_failures_are_reported() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("created-file");
+        fs::write(&file_path, "not a directory").unwrap();
+        let mut journal = OperationJournal::default();
+        journal.record_created(file_path.clone());
+
+        let error = rollback_on_error::<()>(&mut journal, Err(SkillsManagerError::NoSkillsFound))
+            .unwrap_err();
+
+        match error {
+            SkillsManagerError::RollbackFailed { failures, .. } => {
+                assert!(failures.contains(file_path.to_string_lossy().as_ref()));
+            }
+            other => panic!("expected rollback failure, got {other:?}"),
+        }
+    }
 }

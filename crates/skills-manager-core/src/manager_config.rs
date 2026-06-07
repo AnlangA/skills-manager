@@ -1,13 +1,19 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs,
+    fs::{self, OpenOptions},
     path::{Path, PathBuf},
+    thread::sleep,
+    time::{Duration, Instant},
 };
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::{ManagerPaths, Result, fs_ops::atomic_write, skill::path_key};
+use crate::{ManagerPaths, Result, SkillsManagerError, fs_ops::atomic_write, skill::path_key};
+
+const CONFIG_LOCK_RETRY_DELAY: Duration = Duration::from_millis(25);
+const CONFIG_LOCK_TIMEOUT: Duration = Duration::from_secs(60);
+const CONFIG_LOCK_STALE_AFTER: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ManagerConfig {
@@ -45,6 +51,17 @@ pub struct DownloadedMetadata {
     pub resource_bytes: Option<u64>,
 }
 
+#[derive(Debug)]
+pub struct ManagerConfigUpdateLock {
+    path: PathBuf,
+}
+
+impl Drop for ManagerConfigUpdateLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
 impl ManagerConfig {
     pub fn load(paths: &ManagerPaths) -> Result<Self> {
         let file = paths.app_config_file();
@@ -66,6 +83,43 @@ impl ManagerConfig {
             toml::to_string_pretty(self).expect("serializing manager config"),
         )?;
         Ok(())
+    }
+
+    pub fn acquire_update_lock(paths: &ManagerPaths) -> Result<ManagerConfigUpdateLock> {
+        let lock_path = config_lock_file(paths);
+        if let Some(parent) = lock_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let started = Instant::now();
+        loop {
+            match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&lock_path)
+            {
+                Ok(_) => return Ok(ManagerConfigUpdateLock { path: lock_path }),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    remove_stale_lock(&lock_path);
+                    if started.elapsed() >= CONFIG_LOCK_TIMEOUT {
+                        return Err(SkillsManagerError::ConfigLockTimeout(lock_path));
+                    }
+                    sleep(CONFIG_LOCK_RETRY_DELAY);
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+
+    pub fn update<T>(
+        paths: &ManagerPaths,
+        update: impl FnOnce(&mut ManagerConfig) -> Result<T>,
+    ) -> Result<T> {
+        let _lock = Self::acquire_update_lock(paths)?;
+        let mut config = Self::load(paths)?;
+        let result = update(&mut config)?;
+        config.save(paths)?;
+        Ok(result)
     }
 
     pub fn is_disabled(&self, skill_file: &Path) -> bool {
@@ -161,5 +215,74 @@ impl ManagerConfig {
     pub fn forget_install(&mut self, root_dir: &Path, skill_file: &Path) {
         self.installed.remove(&path_key(root_dir));
         self.disabled_skill_files.remove(&path_key(skill_file));
+    }
+}
+
+fn config_lock_file(paths: &ManagerPaths) -> PathBuf {
+    paths.app_config_file().with_extension("toml.lock")
+}
+
+fn remove_stale_lock(lock_path: &Path) {
+    let Ok(metadata) = fs::metadata(lock_path) else {
+        return;
+    };
+    let Ok(modified) = metadata.modified() else {
+        return;
+    };
+    if modified
+        .elapsed()
+        .is_ok_and(|age| age >= CONFIG_LOCK_STALE_AFTER)
+    {
+        let _ = fs::remove_file(lock_path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        path::PathBuf,
+        sync::{Arc, Barrier},
+        thread,
+    };
+
+    use tempfile::tempdir;
+
+    use crate::{ManagerPaths, ProjectRoot};
+
+    use super::*;
+
+    #[test]
+    fn update_lock_preserves_concurrent_config_changes() {
+        let dir = tempdir().unwrap();
+        let paths = Arc::new(ManagerPaths::with_home(
+            dir.path().join("home"),
+            dir.path().join("data"),
+            dir.path().join("config"),
+            Some(ProjectRoot::new(dir.path().join("project"))),
+        ));
+        let barrier = Arc::new(Barrier::new(8));
+        let mut handles = Vec::new();
+
+        for index in 0..8 {
+            let paths = Arc::clone(&paths);
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+                ManagerConfig::update(paths.as_ref(), |config| {
+                    config
+                        .recent_projects
+                        .push(PathBuf::from(format!("project-{index}")));
+                    Ok(())
+                })
+                .unwrap();
+            }));
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let config = ManagerConfig::load(paths.as_ref()).unwrap();
+        assert_eq!(config.recent_projects.len(), 8);
     }
 }

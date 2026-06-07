@@ -67,6 +67,37 @@ fn inventory_scan_returns_workspace_snapshot_envelope() {
 }
 
 #[test]
+fn scan_supports_json_v3_output_without_legacy_flattening() {
+    let sandbox = tempdir().unwrap();
+    let project = sandbox.path().join("project");
+    write_skill(
+        &project,
+        "demo",
+        "---\nname: demo\ndescription: Demo skill for JSON v3 output\n---\n",
+    );
+
+    let output = cli(sandbox.path())
+        .arg("--project")
+        .arg(&project)
+        .arg("--output")
+        .arg("json-v3")
+        .arg("scan")
+        .output()
+        .unwrap();
+
+    assert_success(&output);
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["schema_version"], 3);
+    assert_eq!(json["command"], "scan");
+    assert_eq!(json["status"], "ok");
+    assert_eq!(json["data"]["type"], "skills");
+    assert_eq!(json["data"]["skills"][0]["display_name"], "demo");
+    assert!(json.get("skills").is_none());
+    assert_eq!(json["meta"]["format"], "json-v3");
+    assert_eq!(json["meta"]["legacy_flattened_fields"], false);
+}
+
+#[test]
 fn validate_json_reports_invalid_count() {
     let sandbox = tempdir().unwrap();
     let project = sandbox.path().join("project");

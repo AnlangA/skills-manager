@@ -127,21 +127,9 @@ pub fn nav_button<'a>(
 
 pub fn health_chip<'a>(health: SkillHealth) -> Container<'a, Message> {
     let (label, foreground, background) = match health {
-        SkillHealth::Valid => (
-            "Valid",
-            iced::Color::from_rgb8(22, 101, 52),
-            iced::Color::from_rgb8(220, 252, 231),
-        ),
-        SkillHealth::Warning => (
-            "Warning",
-            iced::Color::from_rgb8(146, 64, 14),
-            iced::Color::from_rgb8(254, 243, 199),
-        ),
-        SkillHealth::Invalid => (
-            "Invalid",
-            iced::Color::from_rgb8(153, 27, 27),
-            iced::Color::from_rgb8(254, 226, 226),
-        ),
+        SkillHealth::Valid => ("Valid", theme::SUCCESS, theme::SUCCESS_SOFT),
+        SkillHealth::Warning => ("Warning", theme::WARNING, theme::WARNING_SOFT),
+        SkillHealth::Invalid => ("Invalid", theme::DANGER, theme::DANGER_SOFT),
         SkillHealth::Shadowed => (
             "Shadowed",
             iced::Color::from_rgb8(55, 65, 81),
@@ -154,11 +142,7 @@ pub fn health_chip<'a>(health: SkillHealth) -> Container<'a, Message> {
 
 pub fn enablement_chip<'a>(enablement: SkillEnablement) -> Container<'a, Message> {
     match enablement {
-        SkillEnablement::Enabled => chip(
-            "Enabled",
-            iced::Color::from_rgb8(21, 128, 61),
-            iced::Color::from_rgb8(220, 252, 231),
-        ),
+        SkillEnablement::Enabled => chip("Enabled", theme::SUCCESS, theme::SUCCESS_SOFT),
         SkillEnablement::Disabled => chip(
             "Disabled",
             theme::MUTED,

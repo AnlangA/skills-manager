@@ -29,6 +29,8 @@ pub struct SkillCandidate {
     pub root_dir: PathBuf,
     pub skill_file: PathBuf,
     pub frontmatter: SkillFrontmatter,
+    pub normalized_name: String,
+    pub search_haystack: String,
     pub diagnostics: Vec<SkillDiagnostic>,
     pub health: SkillHealth,
     pub resource_count: usize,
@@ -51,6 +53,12 @@ struct RawFrontmatter {
     when_to_use: Option<Value>,
     #[serde(flatten)]
     metadata: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct ResourceSummary {
+    count: usize,
+    bytes: u64,
 }
 
 pub fn scan_installed_skills(paths: &ManagerPaths) -> Result<Vec<InstalledSkill>> {
@@ -239,7 +247,7 @@ pub fn discover_skill_candidates(root: &Path) -> Result<Vec<SkillCandidate>> {
     }
 
     debug!(root = %root.display(), "discovering skill candidates");
-    let mut candidates = Vec::new();
+    let mut candidate_files = Vec::new();
 
     for entry in WalkDir::new(root)
         .min_depth(1)
@@ -247,8 +255,8 @@ pub fn discover_skill_candidates(root: &Path) -> Result<Vec<SkillCandidate>> {
         .follow_links(false)
         .into_iter()
         .filter_entry(|entry| !is_ignored_discovery_entry(entry.file_name()))
-        .filter_map(std::result::Result::ok)
     {
+        let entry = entry?;
         if !entry.file_type().is_file() || entry.file_name() != "SKILL.md" {
             continue;
         }
@@ -258,9 +266,22 @@ pub fn discover_skill_candidates(root: &Path) -> Result<Vec<SkillCandidate>> {
             continue;
         };
 
-        candidates.push(read_skill_candidate(root_dir, skill_file));
+        candidate_files.push((root_dir, skill_file));
     }
 
+    candidate_files.sort_by(|(left, _), (right, _)| left.cmp(right));
+    let candidate_roots = candidate_files
+        .iter()
+        .map(|(root_dir, _)| root_dir.clone())
+        .collect::<Vec<_>>();
+    let summaries = resource_summaries_for_candidates(root, &candidate_roots)?;
+    let mut candidates = candidate_files
+        .into_iter()
+        .map(|(root_dir, skill_file)| {
+            let summary = summaries.get(&root_dir).copied().unwrap_or_default();
+            read_skill_candidate_with_summary(root_dir, skill_file, summary)
+        })
+        .collect::<Vec<_>>();
     candidates.sort_by(|left, right| left.root_dir.cmp(&right.root_dir));
     debug!(
         root = %root.display(),
@@ -304,6 +325,15 @@ pub fn disabled_store_root_for_skills_root(skills_root: &Path) -> PathBuf {
 }
 
 pub fn read_skill_candidate(root_dir: PathBuf, skill_file: PathBuf) -> SkillCandidate {
+    let summary = resource_summary(&root_dir);
+    read_skill_candidate_with_summary(root_dir, skill_file, summary)
+}
+
+fn read_skill_candidate_with_summary(
+    root_dir: PathBuf,
+    skill_file: PathBuf,
+    summary: ResourceSummary,
+) -> SkillCandidate {
     let (frontmatter, mut diagnostics) = match parse_skill_frontmatter(&skill_file) {
         Ok(frontmatter) => (frontmatter, Vec::new()),
         Err(error) => (
@@ -313,7 +343,8 @@ pub fn read_skill_candidate(root_dir: PathBuf, skill_file: PathBuf) -> SkillCand
             ))],
         ),
     };
-    let (resource_count, resource_bytes) = resource_summary(&root_dir);
+    let resource_count = summary.count;
+    let resource_bytes = summary.bytes;
     diagnostics.extend(validate_skill(
         &root_dir,
         &frontmatter,
@@ -325,6 +356,8 @@ pub fn read_skill_candidate(root_dir: PathBuf, skill_file: PathBuf) -> SkillCand
     SkillCandidate {
         root_dir,
         skill_file,
+        normalized_name: normalized_skill_name(&frontmatter),
+        search_haystack: candidate_search_haystack(&frontmatter),
         frontmatter,
         diagnostics,
         health,
@@ -632,9 +665,45 @@ fn is_valid_skill_name(name: &str) -> bool {
             .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-' || ch == '_')
 }
 
-fn resource_summary(root_dir: &Path) -> (usize, u64) {
-    let mut count = 0;
-    let mut bytes = 0;
+fn resource_summaries_for_candidates(
+    search_root: &Path,
+    candidate_roots: &[PathBuf],
+) -> Result<HashMap<PathBuf, ResourceSummary>> {
+    let mut summaries = candidate_roots
+        .iter()
+        .map(|root| (root.clone(), ResourceSummary::default()))
+        .collect::<HashMap<_, _>>();
+
+    if candidate_roots.is_empty() {
+        return Ok(summaries);
+    }
+
+    for entry in WalkDir::new(search_root)
+        .min_depth(1)
+        .follow_links(false)
+        .into_iter()
+    {
+        let entry = entry?;
+        if !entry.file_type().is_file() || entry.file_name() == "SKILL.md" {
+            continue;
+        }
+
+        let bytes = entry.metadata().map(|metadata| metadata.len()).unwrap_or(0);
+        for candidate_root in candidate_roots {
+            if entry.path().starts_with(candidate_root)
+                && let Some(summary) = summaries.get_mut(candidate_root)
+            {
+                summary.count += 1;
+                summary.bytes += bytes;
+            }
+        }
+    }
+
+    Ok(summaries)
+}
+
+fn resource_summary(root_dir: &Path) -> ResourceSummary {
+    let mut summary = ResourceSummary::default();
 
     for entry in WalkDir::new(root_dir)
         .min_depth(1)
@@ -646,13 +715,33 @@ fn resource_summary(root_dir: &Path) -> (usize, u64) {
             continue;
         }
 
-        count += 1;
+        summary.count += 1;
         if let Ok(metadata) = entry.metadata() {
-            bytes += metadata.len();
+            summary.bytes += metadata.len();
         }
     }
 
-    (count, bytes)
+    summary
+}
+
+fn normalized_skill_name(frontmatter: &SkillFrontmatter) -> String {
+    frontmatter
+        .name
+        .as_deref()
+        .map(sanitize_folder_name)
+        .unwrap_or_default()
+}
+
+fn candidate_search_haystack(frontmatter: &SkillFrontmatter) -> String {
+    let mut haystack = String::new();
+    haystack.push_str(frontmatter.name.as_deref().unwrap_or_default());
+    haystack.push(' ');
+    haystack.push_str(frontmatter.description.as_deref().unwrap_or_default());
+    haystack.push(' ');
+    haystack.push_str(&frontmatter.allowed_tools.join(" "));
+    haystack.push(' ');
+    haystack.push_str(&frontmatter.tags.join(" "));
+    haystack.to_lowercase()
 }
 
 pub(crate) fn unique_folder_name(
@@ -760,6 +849,37 @@ mod tests {
         let candidates = discover_skill_candidates(dir.path()).unwrap();
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].root_dir, skill);
+    }
+
+    #[test]
+    fn discovery_summarizes_resources_for_multiple_candidates() {
+        let dir = tempdir().unwrap();
+        let first = dir.path().join("skills").join("first");
+        let second = dir.path().join("skills").join("second");
+        fs::create_dir_all(first.join("assets")).unwrap();
+        fs::create_dir_all(&second).unwrap();
+        fs::write(
+            first.join("SKILL.md"),
+            "---\nname: First Skill\ndescription: Use this skill when testing resource summaries\ntags: [fast]\n---\n",
+        )
+        .unwrap();
+        fs::write(first.join("assets/data.txt"), "abc").unwrap();
+        fs::write(
+            second.join("SKILL.md"),
+            "---\nname: second\ndescription: Use this skill when testing second summaries\n---\n",
+        )
+        .unwrap();
+        fs::write(second.join("notes.txt"), "hello").unwrap();
+
+        let candidates = discover_skill_candidates(dir.path()).unwrap();
+
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].resource_count, 1);
+        assert_eq!(candidates[0].resource_bytes, 3);
+        assert_eq!(candidates[0].normalized_name, "first-skill");
+        assert!(candidates[0].search_haystack.contains("fast"));
+        assert_eq!(candidates[1].resource_count, 1);
+        assert_eq!(candidates[1].resource_bytes, 5);
     }
 
     #[test]

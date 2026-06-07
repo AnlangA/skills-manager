@@ -130,39 +130,24 @@ fn target_dashboard(app: &App) -> Element<'_, Message> {
 }
 
 fn target_card<'a>(app: &'a App, scope: SkillScope) -> iced::widget::Button<'a, Message> {
-    let total = app
-        .skills
-        .iter()
-        .filter(|skill| skill.scope == scope)
-        .count();
-    let usable = app
-        .skills
-        .iter()
-        .filter(|skill| skill.scope == scope && skill.is_exportable())
-        .count();
-    let disabled = app
-        .skills
-        .iter()
-        .filter(|skill| skill.scope == scope && !skill.is_enabled())
-        .count();
-    let invalid = app
-        .skills
-        .iter()
-        .filter(|skill| {
-            skill.scope == scope && skill.health == skills_manager_core::SkillHealth::Invalid
-        })
-        .count();
+    let summary = app.scope_summary(scope);
     let filter = scope_filter_for_scope(scope);
 
     button(
         column![
             text(scope.label()).size(13).color(theme::TEXT),
-            text(format!("{usable} usable / {disabled} disabled"))
-                .size(11)
-                .color(theme::MUTED),
-            text(format!("{invalid} invalid / {total} managed"))
-                .size(11)
-                .color(theme::SUBTLE),
+            text(format!(
+                "{} usable / {} disabled",
+                summary.usable, summary.disabled
+            ))
+            .size(11)
+            .color(theme::MUTED),
+            text(format!(
+                "{} attention / {} managed",
+                summary.attention, summary.total
+            ))
+            .size(11)
+            .color(theme::SUBTLE),
         ]
         .spacing(3),
     )

@@ -30,9 +30,12 @@ pub fn view(app: &App) -> Element<'_, Message> {
             .as_ref()
             .is_some_and(|preview| !preview.has_blocking_conflicts());
 
-    let source_panel = components::panel(scrollable(
+    let source_panel = container(
         column![
-            components::section_header("Source", "URL, local folder, downloaded cache, or catalog"),
+            components::section_header(
+                "1 Source",
+                "Choose a GitHub URL, local folder, downloaded cache, or catalog entry"
+            ),
             row![
                 pick_list(
                     InstallSource::ALL,
@@ -45,7 +48,15 @@ pub fn view(app: &App) -> Element<'_, Message> {
             ],
             source_controls(app),
             download_controls(app, can_download),
-            components::section_header("Destination", "Scope and conflict handling"),
+        ]
+        .spacing(12),
+    )
+    .padding(14)
+    .style(theme::accent_panel);
+
+    let destination_panel = components::panel(
+        column![
+            components::section_header("2 Destination", "Scope, enablement, and conflict handling"),
             destination_controls(app),
             compatibility_matrix(app),
             row![
@@ -57,13 +68,17 @@ pub fn view(app: &App) -> Element<'_, Message> {
             .spacing(8),
         ]
         .spacing(12),
+    );
+
+    let setup_panel = container(scrollable(
+        column![source_panel, destination_panel].spacing(12),
     ))
     .width(Length::FillPortion(2))
     .height(Length::Fill);
 
     let preview_panel = components::panel(
         column![
-            components::section_header("Preview", preview_meta(app)),
+            components::section_header("3 Preview", preview_meta(app)),
             scrollable(preview_list(app)).height(Length::Fill),
         ]
         .spacing(12),
@@ -71,7 +86,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
     .width(Length::FillPortion(3))
     .height(Length::Fill);
 
-    row![source_panel, preview_panel]
+    row![setup_panel, preview_panel]
         .spacing(14)
         .height(Length::Fill)
         .into()

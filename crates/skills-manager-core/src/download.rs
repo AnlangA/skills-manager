@@ -21,11 +21,14 @@ use crate::{
 
 const MAX_ARCHIVE_BYTES: usize = 128 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_ARCHIVE_ENTRIES: usize = 10_000;
+const MAX_ARCHIVE_UNCOMPRESSED_BYTES: u64 = 256 * 1024 * 1024;
 
 #[derive(Debug)]
 pub struct DownloadedSkills {
     pub temp_dir: TempDir,
     pub source: GitHubTreeSource,
+    pub search_root: PathBuf,
     pub candidates: Vec<SkillCandidate>,
 }
 
@@ -85,6 +88,7 @@ pub async fn download_github_skills(url: &str) -> Result<DownloadedSkills> {
     Ok(DownloadedSkills {
         temp_dir,
         source,
+        search_root,
         candidates,
     })
 }
@@ -107,6 +111,7 @@ pub fn cache_github_skills_archive(
     download_dir: Option<&Path>,
 ) -> Result<DownloadedSkillEntry> {
     let source = GitHubTreeSource::parse(url)?;
+    let _config_lock = ManagerConfig::acquire_update_lock(paths)?;
     let mut config = ManagerConfig::load(paths)?;
     let download_root = download_dir
         .map(Path::to_path_buf)
@@ -226,6 +231,7 @@ pub fn downloaded_skill_entry(
 pub fn remove_downloaded_skills(paths: &ManagerPaths, root_dir: &Path) -> Result<PathBuf> {
     info!(root_dir = %root_dir.display(), "removing downloaded skills cache");
     let requested = root_dir.canonicalize()?;
+    let _config_lock = ManagerConfig::acquire_update_lock(paths)?;
     let mut config = ManagerConfig::load(paths)?;
     let mut matched = None;
 
@@ -357,7 +363,14 @@ fn github_client() -> Result<reqwest::Client> {
 pub fn extract_zip_safe(bytes: &[u8], destination: &Path) -> Result<()> {
     let reader = Cursor::new(bytes);
     let mut archive = ZipArchive::new(reader)?;
+    if archive.len() > MAX_ARCHIVE_ENTRIES {
+        return Err(SkillsManagerError::ArchiveEntryCountTooLarge {
+            entries: archive.len(),
+            max_entries: MAX_ARCHIVE_ENTRIES,
+        });
+    }
 
+    let mut total_uncompressed_bytes = 0_u64;
     for index in 0..archive.len() {
         let mut file = archive.by_index(index)?;
         let enclosed = file
@@ -375,6 +388,13 @@ pub fn extract_zip_safe(bytes: &[u8], destination: &Path) -> Result<()> {
                 path: enclosed.display().to_string(),
                 bytes: file.size(),
                 max_bytes: MAX_ARCHIVE_ENTRY_BYTES,
+            });
+        }
+        total_uncompressed_bytes = total_uncompressed_bytes.saturating_add(file.size());
+        if total_uncompressed_bytes > MAX_ARCHIVE_UNCOMPRESSED_BYTES {
+            return Err(SkillsManagerError::ArchiveUncompressedTooLarge {
+                bytes: total_uncompressed_bytes,
+                max_bytes: MAX_ARCHIVE_UNCOMPRESSED_BYTES,
             });
         }
 
@@ -486,6 +506,30 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         extract_zip_safe(bytes.get_ref(), dir.path()).unwrap();
         assert!(dir.path().join("repo-main/skill/SKILL.md").exists());
+    }
+
+    #[test]
+    fn rejects_zip_with_too_many_entries() {
+        let mut bytes = Cursor::new(Vec::new());
+        {
+            let mut zip = ZipWriter::new(&mut bytes);
+            for index in 0..=MAX_ARCHIVE_ENTRIES {
+                zip.start_file(
+                    format!("repo-main/skill/resource-{index}.txt"),
+                    SimpleFileOptions::default(),
+                )
+                .unwrap();
+                zip.write_all(b"x").unwrap();
+            }
+            zip.finish().unwrap();
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let error = extract_zip_safe(bytes.get_ref(), dir.path()).unwrap_err();
+        assert!(matches!(
+            error,
+            SkillsManagerError::ArchiveEntryCountTooLarge { .. }
+        ));
     }
 
     #[test]

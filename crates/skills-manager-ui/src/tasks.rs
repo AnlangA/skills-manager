@@ -7,7 +7,7 @@ use iced::Task;
 use skills_manager_core::{
     CatalogFormat, ConflictPolicy, DownloadedSkillEntry, InstallRequest, InstallTarget, Installer,
     ManagerConfig, ManagerPaths, OperationPlan, ProjectRoot, SkillScaffoldRequest,
-    WorkspaceSnapshot, create_skill_scaffold, download_github_catalog,
+    WorkspaceSnapshot, create_skill_scaffold, download_github_catalog, download_github_skills,
     download_github_skills_to_cache, downloaded_skill_entry, export_installed_catalog,
     preview_skill_scaffold, remove_downloaded_skills, scan_installed_skills,
 };
@@ -31,14 +31,16 @@ pub fn save_default_download_path_task(project_path: String, value: String) -> T
     Task::perform(
         async move {
             let paths = paths_from_project(&project_path)?;
-            let mut config = ManagerConfig::load(&paths).map_err(|error| error.to_string())?;
             let trimmed = value.trim();
-            if trimmed.is_empty() || Path::new(trimmed) == paths.downloads_dir() {
-                config.set_default_download_dir(None);
-            } else {
-                config.set_default_download_dir(Some(PathBuf::from(trimmed)));
-            }
-            config.save(&paths).map_err(|error| error.to_string())?;
+            ManagerConfig::update(&paths, |config| {
+                if trimmed.is_empty() || Path::new(trimmed) == paths.downloads_dir() {
+                    config.set_default_download_dir(None);
+                } else {
+                    config.set_default_download_dir(Some(PathBuf::from(trimmed)));
+                }
+                Ok(())
+            })
+            .map_err(|error| error.to_string())?;
             Ok("Saved default download path.".to_string())
         },
         Message::DefaultDownloadPathSaved,
@@ -82,25 +84,32 @@ pub fn preview_task(
             let installer = Installer::new(paths.clone());
             match source {
                 InstallSource::Url => {
-                    let override_dir = download_dir.as_deref().map(Path::new);
-                    let downloaded = download_github_skills_to_cache(&paths, &value, override_dir)
+                    let downloaded = download_github_skills(&value)
                         .await
                         .map_err(|error| error.to_string())?;
-                    let preview = installer
+                    let plan = installer
                         .plan(InstallRequest {
                             source_root: downloaded.search_root.clone(),
                             source_url: Some(value.clone()),
-                            target,
+                            target: target.clone(),
                             conflict_policy,
                             enable_after_install,
                         })
-                        .map(|plan| plan.preview())
                         .map_err(|error| error.to_string())?;
+                    let mut preview = plan.preview();
+                    preview.operation_plan = None;
                     Ok(preview_state(
-                        value.clone(),
-                        Some(downloaded.root_dir),
+                        PreviewContext {
+                            source,
+                            source_label: value.clone(),
+                            source_value: value,
+                            download_dir,
+                            target,
+                            enable_after_install,
+                            download_root: None,
+                            conflict_policy,
+                        },
                         preview,
-                        conflict_policy,
                     ))
                 }
                 InstallSource::Local => {
@@ -109,13 +118,25 @@ pub fn preview_task(
                         .plan(InstallRequest {
                             source_root: source_root.clone(),
                             source_url: None,
-                            target,
+                            target: target.clone(),
                             conflict_policy,
                             enable_after_install,
                         })
                         .map(|plan| plan.preview())
                         .map_err(|error| error.to_string())?;
-                    Ok(preview_state(value, None, preview, conflict_policy))
+                    Ok(preview_state(
+                        PreviewContext {
+                            source,
+                            source_label: value.clone(),
+                            source_value: value,
+                            download_dir,
+                            target,
+                            enable_after_install,
+                            download_root: None,
+                            conflict_policy,
+                        },
+                        preview,
+                    ))
                 }
                 InstallSource::Downloaded => {
                     let downloaded = downloaded_skill_entry(&paths, &PathBuf::from(&value))
@@ -124,17 +145,24 @@ pub fn preview_task(
                         .plan(InstallRequest {
                             source_root: downloaded.search_root.clone(),
                             source_url: Some(downloaded.source_url.clone()),
-                            target,
+                            target: target.clone(),
                             conflict_policy,
                             enable_after_install,
                         })
                         .map(|plan| plan.preview())
                         .map_err(|error| error.to_string())?;
                     Ok(preview_state(
-                        downloaded.source_url.clone(),
-                        Some(downloaded.root_dir),
+                        PreviewContext {
+                            source,
+                            source_label: downloaded.source_url.clone(),
+                            source_value: downloaded.root_dir.display().to_string(),
+                            download_dir,
+                            target,
+                            enable_after_install,
+                            download_root: Some(downloaded.root_dir),
+                            conflict_policy,
+                        },
                         preview,
-                        conflict_policy,
                     ))
                 }
                 InstallSource::Catalog => {
@@ -143,6 +171,56 @@ pub fn preview_task(
             }
         },
         Message::PreviewLoaded,
+    )
+}
+
+pub fn install_source_task(
+    project_path: String,
+    source: InstallSource,
+    value: String,
+    download_dir: Option<String>,
+    target: InstallTarget,
+    conflict_policy: ConflictPolicy,
+    enable_after_install: bool,
+) -> Task<Message> {
+    Task::perform(
+        async move {
+            let paths = paths_from_project(&project_path)?;
+            let installer = Installer::new(paths.clone());
+            let (source_root, source_url) = match source {
+                InstallSource::Url => {
+                    let override_dir = download_dir.as_deref().map(Path::new);
+                    let downloaded = download_github_skills_to_cache(&paths, &value, override_dir)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    (downloaded.search_root, Some(value))
+                }
+                InstallSource::Local => (PathBuf::from(&value), None),
+                InstallSource::Downloaded => {
+                    let downloaded = downloaded_skill_entry(&paths, &PathBuf::from(&value))
+                        .map_err(|error| error.to_string())?;
+                    (downloaded.search_root, Some(downloaded.source_url))
+                }
+                InstallSource::Catalog => {
+                    return Err("Load the catalog, then preview one catalog entry.".to_string());
+                }
+            };
+            let plan = installer
+                .plan(InstallRequest {
+                    source_root,
+                    source_url,
+                    target,
+                    conflict_policy,
+                    enable_after_install,
+                })
+                .map_err(|error| error.to_string())?;
+            let result = installer
+                .install_plan(plan)
+                .map_err(|error| error.to_string())?;
+
+            Ok(format!("Installed {} skill(s).", result.installed.len()))
+        },
+        Message::Installed,
     )
 }
 
@@ -280,18 +358,32 @@ pub fn create_scaffold_task(project_path: String, request: SkillScaffoldRequest)
     )
 }
 
-fn preview_state(
+struct PreviewContext {
+    source: InstallSource,
     source_label: String,
+    source_value: String,
+    download_dir: Option<String>,
+    target: InstallTarget,
+    enable_after_install: bool,
     download_root: Option<PathBuf>,
-    preview: skills_manager_core::InstallPreview,
     conflict_policy: ConflictPolicy,
+}
+
+fn preview_state(
+    context: PreviewContext,
+    preview: skills_manager_core::InstallPreview,
 ) -> PreviewState {
     PreviewState {
-        source_label,
-        download_root,
+        source_label: context.source_label,
+        source: context.source,
+        source_value: context.source_value,
+        download_dir: context.download_dir,
+        target: context.target,
+        enable_after_install: context.enable_after_install,
+        download_root: context.download_root,
         scope: preview.scope,
         destination_root: preview.destination_root,
-        conflict_policy,
+        conflict_policy: context.conflict_policy,
         operation_plan: preview.operation_plan,
         candidates: preview
             .candidates

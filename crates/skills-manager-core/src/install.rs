@@ -292,6 +292,7 @@ impl Installer {
             return Err(SkillsManagerError::NoSkillsFound);
         }
 
+        let _config_lock = ManagerConfig::acquire_update_lock(&self.paths)?;
         let mut config = ManagerConfig::load(&self.paths)?;
         let mut codex_config = CodexConfig::load(&self.paths)?;
         let target_scope = request.target.scope();
@@ -390,6 +391,7 @@ impl Installer {
 
         info!(skill_root = %actual_root.display(), "removing installed skill");
 
+        let _config_lock = ManagerConfig::acquire_update_lock(&self.paths)?;
         let backup = backup_path(&actual_root);
         fs::rename(&actual_root, &backup)?;
         let mut journal = OperationJournal::default();
@@ -430,6 +432,7 @@ impl Installer {
             enabled,
             "updating skill enablement"
         );
+        let _config_lock = ManagerConfig::acquire_update_lock(&self.paths)?;
         let mut config = ManagerConfig::load(&self.paths)?;
         let mut codex_config = CodexConfig::load(&self.paths)?;
         let final_root = if location.scope == SkillScope::Codex {
@@ -695,11 +698,8 @@ fn copy_skill_folder(source: &Path, destination: &Path) -> Result<()> {
 
     fs::create_dir_all(destination)?;
 
-    for entry in WalkDir::new(source)
-        .follow_links(false)
-        .into_iter()
-        .filter_map(std::result::Result::ok)
-    {
+    for entry in WalkDir::new(source).follow_links(false).into_iter() {
+        let entry = entry?;
         let relative = entry
             .path()
             .strip_prefix(source)

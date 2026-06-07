@@ -40,11 +40,26 @@ pub enum SkillsManagerError {
         max_bytes: u64,
     },
 
+    #[error("archive contains too many entries: {entries} (limit {max_entries})")]
+    ArchiveEntryCountTooLarge { entries: usize, max_entries: usize },
+
+    #[error("archive uncompressed contents are too large: {bytes} bytes (limit {max_bytes} bytes)")]
+    ArchiveUncompressedTooLarge { bytes: u64, max_bytes: u64 },
+
     #[error("skill path is not inside the configured global or project skill roots: {0}")]
     UnknownSkillScope(PathBuf),
 
     #[error("downloaded skills path is not managed by this app: {0}")]
     UnknownDownload(PathBuf),
+
+    #[error("timed out waiting for manager config lock: {0}")]
+    ConfigLockTimeout(PathBuf),
+
+    #[error("{source}; rollback failed: {failures}")]
+    RollbackFailed {
+        source: Box<SkillsManagerError>,
+        failures: String,
+    },
 
     #[error("failed to parse {path}: {source}")]
     ParseToml {
@@ -72,6 +87,9 @@ pub enum SkillsManagerError {
 
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("directory traversal error: {0}")]
+    WalkDir(#[from] walkdir::Error),
 
     #[error("http error: {0}")]
     Http(#[from] reqwest::Error),

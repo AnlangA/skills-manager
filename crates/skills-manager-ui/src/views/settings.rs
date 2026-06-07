@@ -31,33 +31,43 @@ pub fn view(app: &App) -> Element<'_, Message> {
                     .on_press_maybe((!app.busy).then_some(Message::SaveDefaultDownloadPath)),
             ]
             .spacing(8),
-            row![
-                components::compact_metric("Project", counts.project.to_string(), theme::PRIMARY),
-                components::compact_metric("Global", counts.global.to_string(), theme::CYAN),
-                components::compact_metric(
-                    "Agents",
-                    (counts.claude_code
-                        + counts.droid
-                        + counts.pencode
-                        + counts.codex
-                        + counts.zed)
-                        .to_string(),
-                    theme::WARNING
-                ),
-                components::compact_metric("Custom", counts.custom.to_string(), theme::WARNING),
-                components::compact_metric(
-                    "Exportable",
-                    counts.exportable.to_string(),
-                    theme::SUCCESS
-                ),
-            ]
-            .spacing(8),
+            target_metrics(counts, app.settings.doctor_report.as_ref()),
             doctor_panel(app.settings.doctor_report.as_ref()),
             storage_summary(),
         ]
         .spacing(12),
     ))
     .height(Length::Fill)
+    .into()
+}
+
+fn target_metrics(
+    counts: crate::app::SkillCounts,
+    report: Option<&DoctorReport>,
+) -> Element<'_, Message> {
+    let repair_actions = report
+        .map(|report| report.summary.repair_actions)
+        .unwrap_or_default();
+    let invalid = report
+        .map(|report| report.summary.invalid)
+        .unwrap_or(counts.invalid);
+    let warnings = report
+        .map(|report| report.summary.warnings)
+        .unwrap_or(counts.warning + counts.shadowed);
+
+    row![
+        components::compact_metric("Project", counts.project.to_string(), theme::PRIMARY),
+        components::compact_metric(
+            "Agent targets",
+            (counts.claude_code + counts.droid + counts.pencode + counts.codex + counts.zed)
+                .to_string(),
+            theme::CYAN
+        ),
+        components::compact_metric("Invalid", invalid.to_string(), theme::DANGER),
+        components::compact_metric("Warnings", warnings.to_string(), theme::WARNING),
+        components::compact_metric("Repairs", repair_actions.to_string(), theme::SUCCESS),
+    ]
+    .spacing(8)
     .into()
 }
 

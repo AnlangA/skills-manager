@@ -130,6 +130,7 @@ pub fn create_skill_scaffold(
         ));
     }
 
+    let _config_lock = ManagerConfig::acquire_update_lock(paths)?;
     fs::create_dir_all(&preview.destination_root)?;
     fs::write(&preview.skill_file, &preview.content)?;
 

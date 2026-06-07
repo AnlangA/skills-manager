@@ -1,10 +1,11 @@
-use std::{fmt, path::PathBuf, time::Duration};
+use std::{collections::BTreeMap, fmt, path::PathBuf, time::Duration};
 
 use iced::{Element, Subscription, Task};
 use skills_manager_core::{
     CatalogFormat, ConflictPolicy, DoctorReport, InstallTarget, InstalledSkill, OperationPlan,
     SkillCatalogSource, SkillEnablement, SkillHealth, SkillScaffoldPreview, SkillScaffoldRequest,
-    SkillScope, TargetProfile, WorkspaceSnapshot, catalog_git_install_url, visible_skill_scopes,
+    SkillScope, TargetProfile, WorkspaceSnapshot, catalog_git_install_url,
+    installed_skill_identity,
 };
 
 use crate::{tasks, views};
@@ -13,6 +14,7 @@ use crate::{tasks, views};
 pub struct App {
     pub snapshot: Option<WorkspaceSnapshot>,
     pub skills: Vec<InstalledSkill>,
+    pub derived: DerivedInventoryState,
     pub active_view: ActiveView,
     pub inventory: InventoryState,
     pub install: InstallState,
@@ -505,6 +507,11 @@ impl fmt::Display for UiCatalogFormat {
 #[derive(Debug, Clone)]
 pub struct PreviewState {
     pub source_label: String,
+    pub source: InstallSource,
+    pub source_value: String,
+    pub download_dir: Option<String>,
+    pub target: InstallTarget,
+    pub enable_after_install: bool,
     pub download_root: Option<PathBuf>,
     pub scope: SkillScope,
     pub destination_root: PathBuf,
@@ -550,7 +557,24 @@ pub struct DownloadedEntryState {
     pub summary: String,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Default)]
+pub struct DerivedInventoryState {
+    pub filtered_skill_indices: Vec<usize>,
+    pub counts: SkillCounts,
+    pub scope_summaries: BTreeMap<SkillScope, ScopeSummary>,
+    pub visible_scopes_by_id: BTreeMap<String, Vec<SkillScope>>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ScopeSummary {
+    pub total: usize,
+    pub usable: usize,
+    pub disabled: usize,
+    pub invalid: usize,
+    pub attention: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SkillCounts {
     pub enabled: usize,
     pub disabled: usize,
@@ -584,6 +608,7 @@ impl App {
         let app = Self {
             snapshot: None,
             skills: Vec::new(),
+            derived: DerivedInventoryState::default(),
             active_view: ActiveView::Library,
             inventory: InventoryState {
                 search_query: String::new(),
@@ -649,13 +674,11 @@ impl App {
     }
 
     pub fn filtered_skills(&self) -> Vec<&InstalledSkill> {
-        let mut skills = self
-            .skills
+        self.derived
+            .filtered_skill_indices
             .iter()
-            .filter(|skill| self.skill_matches(skill))
-            .collect::<Vec<_>>();
-        self.sort_skills(&mut skills);
-        skills
+            .filter_map(|index| self.skills.get(*index))
+            .collect()
     }
 
     pub fn selected_skill(&self) -> Option<&InstalledSkill> {
@@ -663,164 +686,266 @@ impl App {
             .selected_skill_id
             .as_ref()
             .and_then(|id| {
-                self.skills
-                    .iter()
-                    .find(|skill| skill.id == *id && self.skill_matches(skill))
+                self.filtered_skills()
+                    .into_iter()
+                    .find(|skill| skill.id == *id)
             })
-            .or_else(|| self.skills.iter().find(|skill| self.skill_matches(skill)))
+            .or_else(|| {
+                self.derived
+                    .filtered_skill_indices
+                    .first()
+                    .and_then(|index| self.skills.get(*index))
+            })
     }
 
     pub fn counts(&self) -> SkillCounts {
-        self.skills.iter().fold(
-            SkillCounts {
-                enabled: 0,
-                disabled: 0,
-                valid: 0,
-                warning: 0,
-                invalid: 0,
-                shadowed: 0,
-                project: 0,
-                global: 0,
-                claude_code: 0,
-                droid: 0,
-                pencode: 0,
-                codex: 0,
-                zed: 0,
-                custom: 0,
-                known_source: 0,
-                exportable: 0,
-            },
-            |mut counts, skill| {
-                match skill.enablement {
-                    SkillEnablement::Enabled => counts.enabled += 1,
-                    SkillEnablement::Disabled => counts.disabled += 1,
-                }
-                match skill.health {
-                    SkillHealth::Valid => counts.valid += 1,
-                    SkillHealth::Warning => counts.warning += 1,
-                    SkillHealth::Invalid => counts.invalid += 1,
-                    SkillHealth::Shadowed => counts.shadowed += 1,
-                }
-                match skill.scope {
-                    SkillScope::Project => counts.project += 1,
-                    SkillScope::Global => counts.global += 1,
-                    SkillScope::ClaudeCode => counts.claude_code += 1,
-                    SkillScope::Droid => counts.droid += 1,
-                    SkillScope::Pencode => counts.pencode += 1,
-                    SkillScope::Codex => counts.codex += 1,
-                    SkillScope::Zed => counts.zed += 1,
-                    SkillScope::Custom => counts.custom += 1,
-                }
-                if skill.source_url.is_some() {
-                    counts.known_source += 1;
-                }
-                if skill.is_exportable() {
-                    counts.exportable += 1;
-                }
-                counts
-            },
-        )
+        self.derived.counts
     }
 
     pub fn visible_scopes_for_skill(&self, skill: &InstalledSkill) -> Vec<SkillScope> {
-        visible_skill_scopes(self.skills.iter(), skill)
+        self.derived
+            .visible_scopes_by_id
+            .get(&skill.id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn scope_summary(&self, scope: SkillScope) -> ScopeSummary {
+        self.derived
+            .scope_summaries
+            .get(&scope)
+            .copied()
+            .unwrap_or_default()
     }
 
     pub fn ensure_selection(&mut self) {
-        let visible_ids = self
-            .filtered_skills()
-            .into_iter()
-            .map(|skill| skill.id.clone())
-            .collect::<Vec<_>>();
-
         if self
             .inventory
             .selected_skill_id
             .as_ref()
-            .is_some_and(|selected| visible_ids.iter().any(|id| id == selected))
+            .is_some_and(|selected| self.filtered_skill_id_exists(selected))
         {
             return;
         }
 
-        self.inventory.selected_skill_id = visible_ids.into_iter().next();
+        self.inventory.selected_skill_id = self
+            .derived
+            .filtered_skill_indices
+            .first()
+            .and_then(|index| self.skills.get(*index))
+            .map(|skill| skill.id.clone());
+    }
+
+    pub fn rebuild_derived(&mut self) {
+        self.derived.counts = counts_from_skills(&self.skills);
+        self.derived.scope_summaries = scope_summaries_from_skills(&self.skills);
+        self.derived.visible_scopes_by_id = visible_scopes_by_id(&self.skills);
+        self.derived.filtered_skill_indices = self.filtered_indices();
+        self.sort_skill_indices();
+    }
+
+    fn filtered_skill_id_exists(&self, id: &str) -> bool {
+        self.derived.filtered_skill_indices.iter().any(|index| {
+            self.skills
+                .get(*index)
+                .is_some_and(|skill| skill.id.as_str() == id)
+        })
+    }
+
+    fn filtered_indices(&self) -> Vec<usize> {
+        let query = self.inventory.search_query.trim().to_lowercase();
+        if query.is_empty() {
+            return self
+                .skills
+                .iter()
+                .enumerate()
+                .filter_map(|(index, skill)| self.skill_matches_filters(skill).then_some(index))
+                .collect();
+        }
+
+        if let Some(snapshot) = &self.snapshot {
+            return snapshot
+                .index
+                .search
+                .iter()
+                .filter(|entry| entry.haystack.contains(&query))
+                .filter_map(|entry| {
+                    self.skills
+                        .get(entry.skill_index)
+                        .filter(|skill| self.skill_matches_filters(skill))
+                        .map(|_| entry.skill_index)
+                })
+                .collect();
+        }
+
+        self.skills
+            .iter()
+            .enumerate()
+            .filter_map(|(index, skill)| self.skill_matches(skill).then_some(index))
+            .collect()
     }
 
     fn skill_matches(&self, skill: &InstalledSkill) -> bool {
-        if !self.inventory.scope_filter.matches(skill.scope)
-            || !self.inventory.health_filter.matches(skill.health)
-            || !self.inventory.source_filter.matches(skill)
-        {
-            return false;
-        }
+        self.skill_matches_filters(skill) && self.skill_matches_query(skill)
+    }
 
+    fn skill_matches_filters(&self, skill: &InstalledSkill) -> bool {
+        self.inventory.scope_filter.matches(skill.scope)
+            && self.inventory.health_filter.matches(skill.health)
+            && self.inventory.source_filter.matches(skill)
+    }
+
+    fn skill_matches_query(&self, skill: &InstalledSkill) -> bool {
         let query = self.inventory.search_query.trim().to_lowercase();
-        if query.is_empty() {
-            return true;
+        query.is_empty() || skill_search_haystack(skill).contains(&query)
+    }
+
+    fn sort_skill_indices(&mut self) {
+        let sort_key = self.inventory.sort_key;
+        let skills = &self.skills;
+        self.derived
+            .filtered_skill_indices
+            .sort_by(|left, right| compare_skills(&skills[*left], &skills[*right], sort_key));
+    }
+}
+
+fn counts_from_skills(skills: &[InstalledSkill]) -> SkillCounts {
+    skills
+        .iter()
+        .fold(SkillCounts::default(), |mut counts, skill| {
+            match skill.enablement {
+                SkillEnablement::Enabled => counts.enabled += 1,
+                SkillEnablement::Disabled => counts.disabled += 1,
+            }
+            match skill.health {
+                SkillHealth::Valid => counts.valid += 1,
+                SkillHealth::Warning => counts.warning += 1,
+                SkillHealth::Invalid => counts.invalid += 1,
+                SkillHealth::Shadowed => counts.shadowed += 1,
+            }
+            match skill.scope {
+                SkillScope::Project => counts.project += 1,
+                SkillScope::Global => counts.global += 1,
+                SkillScope::ClaudeCode => counts.claude_code += 1,
+                SkillScope::Droid => counts.droid += 1,
+                SkillScope::Pencode => counts.pencode += 1,
+                SkillScope::Codex => counts.codex += 1,
+                SkillScope::Zed => counts.zed += 1,
+                SkillScope::Custom => counts.custom += 1,
+            }
+            if skill.source_url.is_some() {
+                counts.known_source += 1;
+            }
+            if skill.is_exportable() {
+                counts.exportable += 1;
+            }
+            counts
+        })
+}
+
+fn scope_summaries_from_skills(skills: &[InstalledSkill]) -> BTreeMap<SkillScope, ScopeSummary> {
+    let mut summaries = BTreeMap::new();
+
+    for skill in skills {
+        let summary = summaries
+            .entry(skill.scope)
+            .or_insert_with(ScopeSummary::default);
+        summary.total += 1;
+        if skill.is_exportable() {
+            summary.usable += 1;
         }
-
-        skill.display_name.to_lowercase().contains(&query)
-            || skill
-                .description
-                .as_deref()
-                .unwrap_or_default()
-                .to_lowercase()
-                .contains(&query)
-            || skill
-                .root_dir
-                .display()
-                .to_string()
-                .to_lowercase()
-                .contains(&query)
-            || skill
-                .frontmatter
-                .allowed_tools
-                .iter()
-                .any(|tool| tool.to_lowercase().contains(&query))
+        if !skill.is_enabled() {
+            summary.disabled += 1;
+        }
+        if skill.health == SkillHealth::Invalid {
+            summary.invalid += 1;
+        }
+        if matches!(
+            skill.health,
+            SkillHealth::Warning | SkillHealth::Invalid | SkillHealth::Shadowed
+        ) {
+            summary.attention += 1;
+        }
     }
 
-    fn sort_skills(&self, skills: &mut Vec<&InstalledSkill>) {
-        skills.sort_by(|left, right| match self.inventory.sort_key {
-            SortKey::Priority => left
-                .scope
-                .sort_rank()
-                .cmp(&right.scope.sort_rank())
-                .then_with(|| health_rank(left.health).cmp(&health_rank(right.health)))
-                .then_with(|| {
-                    left.display_name
-                        .to_lowercase()
-                        .cmp(&right.display_name.to_lowercase())
-                }),
-            SortKey::Name => left
-                .display_name
-                .to_lowercase()
-                .cmp(&right.display_name.to_lowercase()),
-            SortKey::Health => health_rank(left.health)
-                .cmp(&health_rank(right.health))
-                .then_with(|| {
-                    left.display_name
-                        .to_lowercase()
-                        .cmp(&right.display_name.to_lowercase())
-                }),
-            SortKey::Scope => left
-                .scope
-                .sort_rank()
-                .cmp(&right.scope.sort_rank())
-                .then_with(|| {
-                    left.display_name
-                        .to_lowercase()
-                        .cmp(&right.display_name.to_lowercase())
-                }),
-            SortKey::Resources => right
-                .resource_bytes
-                .cmp(&left.resource_bytes)
-                .then_with(|| right.resource_count.cmp(&left.resource_count)),
-            SortKey::Installed => right.installed_at.cmp(&left.installed_at).then_with(|| {
-                left.display_name
-                    .to_lowercase()
-                    .cmp(&right.display_name.to_lowercase())
-            }),
-        });
+    summaries
+}
+
+fn visible_scopes_by_id(skills: &[InstalledSkill]) -> BTreeMap<String, Vec<SkillScope>> {
+    let mut by_identity = BTreeMap::<String, Vec<SkillScope>>::new();
+
+    for skill in skills.iter().filter(|skill| skill.is_enabled()) {
+        by_identity
+            .entry(installed_skill_identity(skill))
+            .or_default()
+            .push(skill.scope);
     }
+
+    for scopes in by_identity.values_mut() {
+        scopes.sort_by_key(|scope| scope.sort_rank());
+        scopes.dedup();
+    }
+
+    skills
+        .iter()
+        .map(|skill| {
+            let scopes = by_identity
+                .get(&installed_skill_identity(skill))
+                .cloned()
+                .unwrap_or_default();
+            (skill.id.clone(), scopes)
+        })
+        .collect()
+}
+
+fn skill_search_haystack(skill: &InstalledSkill) -> String {
+    let mut haystack = String::new();
+    haystack.push_str(&skill.display_name);
+    haystack.push(' ');
+    haystack.push_str(skill.description.as_deref().unwrap_or_default());
+    haystack.push(' ');
+    haystack.push_str(&skill.root_dir.display().to_string());
+    haystack.push(' ');
+    haystack.push_str(&skill.frontmatter.allowed_tools.join(" "));
+    haystack.push(' ');
+    haystack.push_str(&skill.frontmatter.tags.join(" "));
+    haystack.to_lowercase()
+}
+
+fn compare_skills(
+    left: &InstalledSkill,
+    right: &InstalledSkill,
+    sort_key: SortKey,
+) -> std::cmp::Ordering {
+    match sort_key {
+        SortKey::Priority => left
+            .scope
+            .sort_rank()
+            .cmp(&right.scope.sort_rank())
+            .then_with(|| health_rank(left.health).cmp(&health_rank(right.health)))
+            .then_with(|| sort_name(left).cmp(&sort_name(right))),
+        SortKey::Name => sort_name(left).cmp(&sort_name(right)),
+        SortKey::Health => health_rank(left.health)
+            .cmp(&health_rank(right.health))
+            .then_with(|| sort_name(left).cmp(&sort_name(right))),
+        SortKey::Scope => left
+            .scope
+            .sort_rank()
+            .cmp(&right.scope.sort_rank())
+            .then_with(|| sort_name(left).cmp(&sort_name(right))),
+        SortKey::Resources => right
+            .resource_bytes
+            .cmp(&left.resource_bytes)
+            .then_with(|| right.resource_count.cmp(&left.resource_count)),
+        SortKey::Installed => right
+            .installed_at
+            .cmp(&left.installed_at)
+            .then_with(|| sort_name(left).cmp(&sort_name(right))),
+    }
+}
+
+fn sort_name(skill: &InstalledSkill) -> String {
+    skill.display_name.to_lowercase()
 }
 
 fn health_rank(health: SkillHealth) -> u8 {
@@ -878,6 +1003,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                     app.settings.doctor_report = Some(snapshot.doctor_report.clone());
                     app.skills = snapshot.skills.clone();
                     app.snapshot = Some(snapshot);
+                    app.rebuild_derived();
                     app.ensure_selection();
                 }
                 Err(error) => app.status = error,
@@ -890,6 +1016,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::SearchChanged(value) => {
             app.inventory.search_query = value;
+            app.rebuild_derived();
             app.ensure_selection();
             Task::none()
         }
@@ -899,21 +1026,25 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::ScopeFilterSelected(scope_filter) => {
             app.inventory.scope_filter = scope_filter;
+            app.rebuild_derived();
             app.ensure_selection();
             Task::none()
         }
         Message::HealthFilterSelected(health_filter) => {
             app.inventory.health_filter = health_filter;
+            app.rebuild_derived();
             app.ensure_selection();
             Task::none()
         }
         Message::SourceFilterSelected(source_filter) => {
             app.inventory.source_filter = source_filter;
+            app.rebuild_derived();
             app.ensure_selection();
             Task::none()
         }
         Message::SortSelected(sort_key) => {
             app.inventory.sort_key = sort_key;
+            app.rebuild_derived();
             app.ensure_selection();
             Task::none()
         }
@@ -1046,8 +1177,17 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                 return Task::none();
             };
             let Some(plan) = preview.operation_plan else {
-                app.status = "Preview does not include an operation plan.".to_string();
-                return Task::none();
+                app.busy = true;
+                app.status = "Installing previewed skill(s)...".to_string();
+                return tasks::install_source_task(
+                    app.settings.project_path.clone(),
+                    preview.source,
+                    preview.source_value,
+                    preview.download_dir,
+                    preview.target,
+                    preview.conflict_policy,
+                    preview.enable_after_install,
+                );
             };
 
             app.busy = true;
@@ -1574,6 +1714,7 @@ mod tests {
         ];
 
         app.inventory.scope_filter = ScopeFilter::Zed;
+        app.rebuild_derived();
         app.ensure_selection();
         let visible = app.filtered_skills();
         assert_eq!(visible.len(), 1);
@@ -1614,6 +1755,59 @@ mod tests {
         assert!(!app.settings.target_profiles.is_empty());
         assert!(app.settings.default_download_path.contains("downloads"));
         assert_eq!(app.active_view, ActiveView::Library);
+    }
+
+    #[test]
+    fn derived_inventory_state_tracks_filters_summaries_and_visibility() {
+        let (mut app, _) = App::init_with_smoke_test(false);
+        let mut disabled = installed_skill(SkillScope::Codex, "codex-disabled");
+        disabled.enablement = SkillEnablement::Disabled;
+        app.skills = vec![
+            installed_skill(SkillScope::Project, "shared"),
+            installed_skill(SkillScope::Global, "shared"),
+            disabled,
+        ];
+
+        app.rebuild_derived();
+
+        assert_eq!(app.counts().enabled, 2);
+        assert_eq!(app.counts().disabled, 1);
+        assert_eq!(app.scope_summary(SkillScope::Project).usable, 1);
+        assert_eq!(app.scope_summary(SkillScope::Codex).disabled, 1);
+        assert_eq!(
+            app.visible_scopes_for_skill(&app.skills[0]),
+            vec![SkillScope::Project, SkillScope::Global]
+        );
+
+        app.inventory.search_query = "disabled".to_string();
+        app.rebuild_derived();
+        let visible = app.filtered_skills();
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].scope, SkillScope::Codex);
+    }
+
+    #[test]
+    fn install_preview_without_operation_plan_uses_source_parameters() {
+        let (mut app, _) = App::init_with_smoke_test(false);
+        app.install.preview = Some(PreviewState {
+            source_label: "local source".to_string(),
+            source: InstallSource::Local,
+            source_value: "source".to_string(),
+            download_dir: None,
+            target: InstallTarget::Global,
+            enable_after_install: true,
+            download_root: None,
+            scope: SkillScope::Global,
+            destination_root: PathBuf::from("destination"),
+            conflict_policy: ConflictPolicy::Block,
+            operation_plan: None,
+            candidates: Vec::new(),
+        });
+
+        let _task = update(&mut app, Message::InstallPreview);
+
+        assert!(app.busy);
+        assert_eq!(app.status, "Installing previewed skill(s)...");
     }
 
     fn installed_skill(scope: SkillScope, name: &str) -> InstalledSkill {
