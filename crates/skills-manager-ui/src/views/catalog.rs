@@ -1,8 +1,9 @@
 use iced::{
     Alignment, Element, Length,
-    widget::{column, container, pick_list, row, scrollable, text},
+    widget::{column, container, row, scrollable, text},
 };
 
+use crate::theme::*;
 use crate::{
     app::{App, Message, UiCatalogFormat},
     components, icons, theme,
@@ -14,6 +15,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
         .iter()
         .filter(|skill| skill.is_exportable())
         .count();
+
     let output: Element<'_, Message> = if app.catalog.catalog_output.is_empty() {
         components::empty_state(
             "No export generated",
@@ -24,32 +26,30 @@ pub fn view(app: &App) -> Element<'_, Message> {
         container(
             scrollable(
                 text(&app.catalog.catalog_output)
-                    .size(12)
-                    .color(theme::TEXT)
+                    .size(FONT_CAPTION)
+                    .color(TEXT)
                     .wrapping(text::Wrapping::WordOrGlyph),
             )
             .height(Length::Fill),
         )
-        .padding(12)
-        .style(theme::flat_panel)
+        .padding(SPACING_LG)
+        .style(theme::flat_card)
         .into()
     };
 
-    components::panel(
+    components::card(
         column![
             components::section_header(
                 "Catalog Export",
                 format!("{exportable} exportable skill(s)")
             ),
             row![
-                pick_list(
-                    UiCatalogFormat::ALL,
+                components::styled_pick_list(
+                    &UiCatalogFormat::ALL,
                     Some(app.catalog.catalog_format),
-                    Message::CatalogFormatSelected
-                )
-                .padding([9, 12])
-                .style(theme::select)
-                .width(Length::Fixed(160.0)),
+                    Message::CatalogFormatSelected,
+                    Length::Fixed(140.0),
+                ),
                 components::primary_button("Generate", Some(icons::FILE))
                     .on_press_maybe((!app.busy).then_some(Message::GenerateCatalog)),
                 components::secondary_button("Copy", Some(icons::COPY)).on_press_maybe(
@@ -60,7 +60,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
                         .then_some(Message::SaveCatalog)
                 ),
             ]
-            .spacing(10)
+            .spacing(SPACING_MD)
             .align_y(Alignment::Center),
             components::compact_field(
                 "Save path",
@@ -70,7 +70,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
             ),
             output,
         ]
-        .spacing(12),
+        .spacing(SPACING_LG),
     )
     .height(Length::Fill)
     .into()

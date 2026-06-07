@@ -2,97 +2,61 @@ use std::path::PathBuf;
 
 use iced::{
     Alignment, Element, Length,
-    widget::{button, checkbox, column, container, pick_list, row, rule, scrollable, text},
+    widget::{button, checkbox, column, container, row, scrollable, text, text_input},
 };
-use skills_manager_core::{InstalledSkill, SkillScope, format_bytes};
+use skills_manager_core::{
+    InstalledSkill, ManagedResource, ResourceHealth, ResourceKind, SkillHealth, SkillScope,
+    format_bytes,
+};
 
+use crate::theme::*;
 use crate::{
-    app::{App, DetailTab, HealthFilter, Message, ScopeFilter, SortKey, SourceFilter},
+    app::{App, HealthFilter, Message, ScopeFilter, SortKey, SourceFilter},
     components, icons, theme,
 };
-
-use super::detail_row;
 
 const TOOL_SECTION_ORDER: [SkillScope; 8] = [
     SkillScope::Codex,
     SkillScope::Zed,
     SkillScope::ClaudeCode,
     SkillScope::Droid,
-    SkillScope::Pencode,
+    SkillScope::OpenCode,
     SkillScope::Global,
     SkillScope::Project,
     SkillScope::Custom,
 ];
 
 pub fn view(app: &App) -> Element<'_, Message> {
+    if app.inventory.resource_kind_filter != crate::app::ResourceKindFilter::Skills {
+        return resource_library_view(app);
+    }
+
     let counts = app.counts();
     let visible = app.filtered_skills();
     let selected = app.selected_skill();
     let attention = counts.warning + counts.invalid + counts.shadowed;
 
-    let metrics = row![
-        components::compact_metric("Total", app.skills.len().to_string(), theme::PRIMARY),
-        components::compact_metric("Usable", counts.exportable.to_string(), theme::CYAN),
-        components::compact_metric("Enabled", counts.enabled.to_string(), theme::SUCCESS),
-        components::compact_metric("Needs attention", attention.to_string(), theme::WARNING),
+    let summary = row![
+        components::summary_stat("skills", app.skills.len().to_string(), PRIMARY),
+        text("\u{00B7}").size(FONT_BODY).color(TEXT_MUTED),
+        components::summary_stat("enabled", counts.enabled.to_string(), SUCCESS),
+        text("\u{00B7}").size(FONT_BODY).color(TEXT_MUTED),
+        components::summary_stat("need attention", attention.to_string(), WARNING),
+        text("\u{00B7}").size(FONT_BODY).color(TEXT_MUTED),
+        components::summary_stat("exportable", counts.exportable.to_string(), INFO),
     ]
-    .spacing(8);
+    .spacing(SPACING_SM)
+    .align_y(Alignment::Center);
 
-    let filters = column![
-        components::compact_field(
-            "Search inventory",
-            "Search local skills",
-            &app.inventory.search_query,
-            Message::SearchChanged,
-        ),
-        row![
-            pick_list(
-                ScopeFilter::ALL,
-                Some(app.inventory.scope_filter),
-                Message::ScopeFilterSelected
-            )
-            .padding([9, 12])
-            .style(theme::select)
-            .width(Length::FillPortion(1)),
-            pick_list(
-                HealthFilter::ALL,
-                Some(app.inventory.health_filter),
-                Message::HealthFilterSelected
-            )
-            .padding([9, 12])
-            .style(theme::select)
-            .width(Length::FillPortion(1)),
-            pick_list(
-                SourceFilter::ALL,
-                Some(app.inventory.source_filter),
-                Message::SourceFilterSelected
-            )
-            .padding([9, 12])
-            .style(theme::select)
-            .width(Length::FillPortion(1)),
-            pick_list(
-                SortKey::ALL,
-                Some(app.inventory.sort_key),
-                Message::SortSelected
-            )
-            .padding([9, 12])
-            .style(theme::select)
-            .width(Length::FillPortion(1)),
-        ]
-        .spacing(10)
-        .align_y(Alignment::Center),
-        quick_filters(app),
-    ]
-    .spacing(10);
+    let filters = filter_bar(app);
 
-    let list = components::panel(
+    let list = components::card(
         column![
-            components::section_header("Library", format!("{} matching", visible.len())),
             filters,
             table_header(app),
             scrollable(skill_list(app, &visible)).height(Length::Fill),
         ]
-        .spacing(12),
+        .spacing(SPACING_MD),
     )
     .width(Length::FillPortion(3))
     .height(Length::Fill);
@@ -102,7 +66,6 @@ pub fn view(app: &App) -> Element<'_, Message> {
         .unwrap_or_default();
     let inspector = skill_inspector(
         selected,
-        app.inventory.detail_tab,
         selected_visible_scopes,
         app.inventory.pending_remove_skill.as_ref(),
         app.busy,
@@ -111,84 +74,315 @@ pub fn view(app: &App) -> Element<'_, Message> {
     .height(Length::Fill);
 
     column![
-        metrics,
-        target_dashboard(app),
-        row![list, inspector].spacing(14).height(Length::Fill)
+        summary,
+        row![list, inspector]
+            .spacing(SPACING_LG)
+            .height(Length::Fill)
     ]
-    .spacing(12)
+    .spacing(SPACING_MD)
     .height(Length::Fill)
     .into()
 }
 
-fn target_dashboard(app: &App) -> Element<'_, Message> {
-    TOOL_SECTION_ORDER
-        .into_iter()
-        .fold(row![].spacing(8), |cards, scope| {
-            cards.push(target_card(app, scope).width(Length::FillPortion(1)))
-        })
-        .into()
+fn filter_bar(app: &App) -> Element<'_, Message> {
+    row![
+        text_input("Filter skills...", &app.inventory.search_query)
+            .on_input(Message::SearchChanged)
+            .padding([SPACING_SM, SPACING_MD])
+            .style(theme::input)
+            .width(Length::FillPortion(2)),
+        container(components::styled_pick_list(
+            &crate::app::ResourceKindFilter::ALL,
+            Some(app.inventory.resource_kind_filter),
+            Message::ResourceKindSelected,
+            Length::Fill,
+        ))
+        .width(Length::FillPortion(1)),
+        container(components::styled_pick_list(
+            &ScopeFilter::ALL,
+            Some(app.inventory.scope_filter),
+            Message::ScopeFilterSelected,
+            Length::Fill,
+        ))
+        .width(Length::FillPortion(1)),
+        container(components::styled_pick_list(
+            &HealthFilter::ALL,
+            Some(app.inventory.health_filter),
+            Message::HealthFilterSelected,
+            Length::Fill,
+        ))
+        .width(Length::FillPortion(1)),
+        container(components::styled_pick_list(
+            &SourceFilter::ALL,
+            Some(app.inventory.source_filter),
+            Message::SourceFilterSelected,
+            Length::Fill,
+        ))
+        .width(Length::FillPortion(1)),
+    ]
+    .spacing(SPACING_MD)
+    .align_y(Alignment::Center)
+    .into()
 }
 
-fn target_card<'a>(app: &'a App, scope: SkillScope) -> iced::widget::Button<'a, Message> {
-    let summary = app.scope_summary(scope);
-    let filter = scope_filter_for_scope(scope);
+fn resource_library_view(app: &App) -> Element<'_, Message> {
+    let resources = filtered_resources(app);
+    let selected = selected_resource(app, &resources);
+    let plugins = app
+        .resources
+        .iter()
+        .filter(|resource| resource.kind == ResourceKind::Plugin)
+        .count();
+    let marketplaces = app
+        .resources
+        .iter()
+        .filter(|resource| resource.kind == ResourceKind::Marketplace)
+        .count();
+    let warnings = app
+        .resources
+        .iter()
+        .filter(|resource| resource.health != ResourceHealth::Valid)
+        .count();
 
-    button(
+    let summary = row![
+        components::summary_stat("resources", app.resources.len().to_string(), PRIMARY),
+        text("\u{00B7}").size(FONT_BODY).color(TEXT_MUTED),
+        components::summary_stat("plugins", plugins.to_string(), INFO),
+        text("\u{00B7}").size(FONT_BODY).color(TEXT_MUTED),
+        components::summary_stat("marketplaces", marketplaces.to_string(), SUCCESS),
+        text("\u{00B7}").size(FONT_BODY).color(TEXT_MUTED),
+        components::summary_stat("need attention", warnings.to_string(), WARNING),
+    ]
+    .spacing(SPACING_SM)
+    .align_y(Alignment::Center);
+
+    let list = components::card(
         column![
-            text(scope.label()).size(13).color(theme::TEXT),
-            text(format!(
-                "{} usable / {} disabled",
-                summary.usable, summary.disabled
-            ))
-            .size(11)
-            .color(theme::MUTED),
-            text(format!(
-                "{} attention / {} managed",
-                summary.attention, summary.total
-            ))
-            .size(11)
-            .color(theme::SUBTLE),
+            filter_bar(app),
+            scrollable(resource_list(app, &resources)).height(Length::Fill),
         ]
-        .spacing(3),
+        .spacing(SPACING_MD),
     )
-    .padding([8, 10])
-    .style(theme::subtle_button(app.inventory.scope_filter == filter))
-    .on_press(Message::ScopeFilterSelected(filter))
+    .width(Length::FillPortion(3))
+    .height(Length::Fill);
+    let inspector = resource_inspector(selected)
+        .width(Length::FillPortion(2))
+        .height(Length::Fill);
+
+    column![
+        summary,
+        row![list, inspector]
+            .spacing(SPACING_LG)
+            .height(Length::Fill)
+    ]
+    .spacing(SPACING_MD)
+    .height(Length::Fill)
+    .into()
 }
 
-fn scope_filter_for_scope(scope: SkillScope) -> ScopeFilter {
-    match scope {
-        SkillScope::Project => ScopeFilter::Project,
-        SkillScope::Global => ScopeFilter::Global,
-        SkillScope::ClaudeCode => ScopeFilter::ClaudeCode,
-        SkillScope::Droid => ScopeFilter::Droid,
-        SkillScope::Pencode => ScopeFilter::Pencode,
-        SkillScope::Codex => ScopeFilter::Codex,
-        SkillScope::Zed => ScopeFilter::Zed,
-        SkillScope::Custom => ScopeFilter::Custom,
+fn filtered_resources(app: &App) -> Vec<&ManagedResource> {
+    let query = app.inventory.search_query.trim().to_lowercase();
+    app.resources
+        .iter()
+        .filter(|resource| app.inventory.resource_kind_filter.matches(resource.kind))
+        .filter(|resource| {
+            query.is_empty()
+                || resource.display_name.to_lowercase().contains(&query)
+                || resource
+                    .description
+                    .as_deref()
+                    .unwrap_or_default()
+                    .to_lowercase()
+                    .contains(&query)
+                || resource
+                    .root_dir
+                    .display()
+                    .to_string()
+                    .to_lowercase()
+                    .contains(&query)
+        })
+        .collect()
+}
+
+fn selected_resource<'a>(
+    app: &'a App,
+    resources: &[&'a ManagedResource],
+) -> Option<&'a ManagedResource> {
+    app.inventory
+        .selected_resource_id
+        .as_ref()
+        .and_then(|id| {
+            resources
+                .iter()
+                .copied()
+                .find(|resource| resource.id == *id)
+        })
+        .or_else(|| resources.first().copied())
+}
+
+fn resource_list<'a>(app: &'a App, resources: &[&'a ManagedResource]) -> Element<'a, Message> {
+    if resources.is_empty() {
+        return components::empty_state(
+            "No resources found",
+            "Try another resource type or search query.",
+        )
+        .into();
+    }
+    components::list_column(resources.iter().copied(), SPACING_SM, |resource| {
+        resource_row(app, resource)
+    })
+    .into()
+}
+
+fn resource_row<'a>(app: &'a App, resource: &'a ManagedResource) -> Element<'a, Message> {
+    let selected = app
+        .inventory
+        .selected_resource_id
+        .as_ref()
+        .is_some_and(|id| id == &resource.id);
+    let select = components::small_ghost_button("View", Some(icons::EYE))
+        .on_press(Message::SelectResource(resource.id.clone()));
+
+    container(
+        row![
+            column![
+                text(&resource.display_name).size(FONT_BODY).color(TEXT),
+                text(format!(
+                    "{} - {}",
+                    resource.kind.label(),
+                    resource.root_dir.display()
+                ))
+                .size(FONT_MICRO)
+                .color(TEXT_MUTED)
+                .wrapping(text::Wrapping::WordOrGlyph),
+            ]
+            .spacing(SPACING_XS)
+            .width(Length::Fill),
+            resource_health_dot(resource.health),
+            select,
+        ]
+        .spacing(SPACING_MD)
+        .align_y(Alignment::Center),
+    )
+    .padding([SPACING_MD, SPACING_MD + 2.0])
+    .style(if selected {
+        theme::selected_card
+    } else {
+        theme::card
+    })
+    .into()
+}
+
+fn resource_inspector<'a>(
+    resource: Option<&'a ManagedResource>,
+) -> iced::widget::Container<'a, Message> {
+    match resource {
+        Some(resource) => components::card(
+            scrollable(
+                column![
+                    row![
+                        resource_kind_chip(resource.kind),
+                        resource_target_chip(resource),
+                        components::enablement_chip(resource.enablement),
+                    ]
+                    .spacing(SPACING_SM)
+                    .align_y(Alignment::Center),
+                    text(&resource.display_name).size(FONT_DISPLAY).color(TEXT),
+                    components::detail_section(
+                        "OVERVIEW",
+                        column![
+                            components::detail_row(
+                                "Description",
+                                resource.description.as_deref().unwrap_or("No description"),
+                            ),
+                            components::detail_row(
+                                "Source",
+                                resource.source_url.as_deref().unwrap_or("Unknown"),
+                            ),
+                            components::detail_row("Root", resource.root_dir.display().to_string()),
+                            components::detail_row(
+                                "Manifest",
+                                resource
+                                    .manifest_file
+                                    .as_ref()
+                                    .map(|path| path.display().to_string())
+                                    .unwrap_or_else(|| "N/A".to_string()),
+                            ),
+                        ]
+                        .spacing(SPACING_SM),
+                    ),
+                    components::detail_section(
+                        "METADATA",
+                        components::text_lines(
+                            resource
+                                .metadata
+                                .iter()
+                                .map(|(key, value)| format!("{key}: {value}")),
+                            "No metadata",
+                            TEXT_SECONDARY,
+                            FONT_CAPTION,
+                        ),
+                    ),
+                    components::detail_section(
+                        "DIAGNOSTICS",
+                        components::diagnostic_lines(&resource.diagnostics, "No diagnostics"),
+                    ),
+                ]
+                .spacing(SPACING_LG),
+            )
+            .height(Length::Fill),
+        ),
+        None => components::card(components::empty_state(
+            "No resource selected",
+            "Select a resource to view details.",
+        )),
+    }
+}
+
+fn resource_health_dot<'a>(health: ResourceHealth) -> Element<'a, Message> {
+    components::health_dot(match health {
+        ResourceHealth::Valid => SkillHealth::Valid,
+        ResourceHealth::Warning => SkillHealth::Warning,
+        ResourceHealth::Invalid => SkillHealth::Invalid,
+    })
+}
+
+fn resource_kind_chip<'a>(kind: ResourceKind) -> iced::widget::Container<'a, Message> {
+    let (label, foreground, background) = match kind {
+        ResourceKind::Skill => ("Skill", SUCCESS, SUCCESS_SOFT),
+        ResourceKind::Plugin => ("Plugin", INFO, INFO_SOFT),
+        ResourceKind::Marketplace => ("Marketplace", PRIMARY, PRIMARY_SOFT),
+    };
+    container(text(label).size(FONT_MICRO).color(foreground))
+        .padding([SPACING_XS, SPACING_SM])
+        .style(theme::chip(background, foreground))
+}
+
+fn resource_target_chip<'a>(resource: &ManagedResource) -> iced::widget::Container<'a, Message> {
+    match resource.target {
+        skills_manager_core::AgentToolTarget::Codex => components::scope_chip(SkillScope::Codex),
+        skills_manager_core::AgentToolTarget::ClaudeCode => {
+            components::scope_chip(SkillScope::ClaudeCode)
+        }
+        skills_manager_core::AgentToolTarget::Generic => components::scope_chip(SkillScope::Custom),
     }
 }
 
 fn skill_list<'a>(app: &'a App, skills: &[&'a InstalledSkill]) -> Element<'a, Message> {
     if skills.is_empty() {
-        return components::empty_state(
-            "No skills found",
-            "Try a different search, scope, health, or source filter.",
-        )
-        .into();
+        return components::empty_state("No skills found", "Try adjusting your search or filters.")
+            .into();
     }
 
-    tool_scopes(skills)
-        .into_iter()
-        .fold(column![].spacing(14), |list, scope| {
-            let scoped_skills = skills
-                .iter()
-                .copied()
-                .filter(|skill| skill.scope == scope)
-                .collect::<Vec<_>>();
-            list.push(tool_section(app, scope, scoped_skills))
-        })
-        .into()
+    components::list_column(tool_scopes(skills), SPACING_LG, |scope| {
+        let scoped_skills = skills
+            .iter()
+            .copied()
+            .filter(|skill| skill.scope == scope)
+            .collect::<Vec<_>>();
+        tool_section(app, scope, scoped_skills)
+    })
+    .into()
 }
 
 fn tool_section<'a>(
@@ -196,88 +390,53 @@ fn tool_section<'a>(
     scope: SkillScope,
     skills: Vec<&'a InstalledSkill>,
 ) -> Element<'a, Message> {
-    let section_meta = tool_section_meta(&skills);
-    let rows = skills
-        .into_iter()
-        .fold(column![].spacing(8), |list, skill| {
-            let selected = app
-                .inventory
-                .selected_skill_id
-                .as_ref()
-                .is_some_and(|id| id == &skill.id);
-            let pending_remove = app
-                .inventory
-                .pending_remove_skill
-                .as_ref()
-                .is_some_and(|path| path == &skill.root_dir);
-            let visible_scopes = app.visible_scopes_for_skill(skill);
-            list.push(skill_row(
-                skill,
-                visible_scopes,
-                selected,
-                pending_remove,
-                app.busy,
-            ))
-        });
+    let count = skills.len();
+    let rows = components::list_column(skills, SPACING_SM, |skill| {
+        let selected = app
+            .inventory
+            .selected_skill_id
+            .as_ref()
+            .is_some_and(|id| id == &skill.id);
+        let pending_remove = app
+            .inventory
+            .pending_remove_skill
+            .as_ref()
+            .is_some_and(|path| path == &skill.root_dir);
+        skill_row(skill, selected, pending_remove, app.busy)
+    });
 
     column![
         row![
             components::scope_chip(scope),
-            text(section_meta).size(12).color(theme::MUTED),
+            text(format!("{} skill(s)", count))
+                .size(FONT_CAPTION)
+                .color(TEXT_MUTED),
         ]
-        .spacing(8)
+        .spacing(SPACING_SM)
         .align_y(Alignment::Center),
         rows,
     ]
-    .spacing(8)
+    .spacing(SPACING_SM)
     .into()
 }
 
 fn tool_scopes(skills: &[&InstalledSkill]) -> Vec<SkillScope> {
     let mut scopes = Vec::new();
-
     for scope in TOOL_SECTION_ORDER {
         if skills.iter().any(|skill| skill.scope == scope) {
             scopes.push(scope);
         }
     }
-
     for skill in skills {
         if !scopes.contains(&skill.scope) {
             scopes.push(skill.scope);
         }
     }
-
     scopes
-}
-
-fn tool_section_meta(skills: &[&InstalledSkill]) -> String {
-    let usable = skills.iter().filter(|skill| skill.is_exportable()).count();
-    let disabled = skills.iter().filter(|skill| !skill.is_enabled()).count();
-    let attention = skills
-        .iter()
-        .filter(|skill| {
-            matches!(
-                skill.health,
-                skills_manager_core::SkillHealth::Warning
-                    | skills_manager_core::SkillHealth::Invalid
-                    | skills_manager_core::SkillHealth::Shadowed
-            )
-        })
-        .count();
-
-    format!(
-        "{} usable / {} disabled / {} needs attention / {} managed",
-        usable,
-        disabled,
-        attention,
-        skills.len()
-    )
 }
 
 fn skill_row<'a>(
     skill: &'a InstalledSkill,
-    visible_scopes: Vec<SkillScope>,
     selected: bool,
     pending_remove: bool,
     busy: bool,
@@ -290,94 +449,59 @@ fn skill_row<'a>(
         (!busy).then_some(move |checked| Message::SetSkillEnabled(toggle_root.clone(), checked)),
     );
 
-    let details = if selected {
-        components::primary_button("Details", Some(icons::EYE)).on_press(Message::SelectSkill(id))
-    } else {
-        components::secondary_button("Details", Some(icons::EYE)).on_press(Message::SelectSkill(id))
-    };
-    let remove_label = if pending_remove { "Confirm" } else { "Remove" };
-    let remove_message = if pending_remove {
-        Message::ConfirmRemoveSkill(skill_root)
-    } else {
-        Message::RequestRemoveSkill(skill_root)
-    };
-    let remove = components::danger_button(remove_label, Some(icons::TRASH))
-        .on_press_maybe((!busy).then_some(remove_message));
+    let select =
+        components::small_ghost_button("View", Some(icons::EYE)).on_press(Message::SelectSkill(id));
+    let remove = components::confirm_button(
+        pending_remove,
+        "Remove",
+        "Confirm",
+        Some(icons::TRASH),
+        Message::RequestRemoveSkill(skill_root.clone()),
+        Message::ConfirmRemoveSkill(skill_root),
+        busy,
+    );
 
     container(
         row![
             toggle,
             column![
-                text(&skill.display_name).size(15).color(theme::TEXT),
+                text(&skill.display_name).size(FONT_BODY).color(TEXT),
                 text(skill.destination_name())
-                    .size(12)
-                    .color(theme::SUBTLE)
+                    .size(FONT_MICRO)
+                    .color(TEXT_MUTED)
                     .wrapping(text::Wrapping::WordOrGlyph),
             ]
-            .spacing(4)
-            .width(Length::FillPortion(5)),
-            column![
-                components::health_chip(skill.health),
-                components::enablement_chip(skill.enablement),
-            ]
-            .spacing(5)
-            .width(Length::FillPortion(2)),
-            column![
-                text(visibility_label(&visible_scopes))
-                    .size(11)
-                    .color(theme::SUBTLE),
-            ]
-            .spacing(5)
-            .width(Length::FillPortion(2)),
-            column![
-                text(skill.resource_count.to_string())
-                    .size(13)
-                    .color(theme::TEXT),
-                text(format_bytes(skill.resource_bytes))
-                    .size(11)
-                    .color(theme::SUBTLE),
-            ]
-            .spacing(4)
-            .width(Length::FillPortion(2)),
-            row![details, remove]
-                .spacing(6)
-                .align_y(Alignment::Center)
-                .width(Length::Shrink),
+            .spacing(SPACING_XS)
+            .width(Length::Fill),
+            components::health_dot(skill.health),
+            row![select, remove]
+                .spacing(SPACING_SM)
+                .align_y(Alignment::Center),
         ]
-        .spacing(10)
+        .spacing(SPACING_MD)
         .align_y(Alignment::Center),
     )
-    .padding([9, 10])
+    .padding([SPACING_MD, SPACING_MD + 2.0])
     .style(if selected {
-        theme::selected_table_row
+        theme::selected_card
     } else {
-        theme::table_row
+        theme::card
     })
     .into()
 }
 
 fn table_header(app: &App) -> Element<'_, Message> {
-    container(
+    components::flat_card(
         row![
-            text("").width(Length::Fixed(22.0)),
-            sort_header("Skill", SortKey::Name, app.inventory.sort_key)
-                .width(Length::FillPortion(5)),
-            sort_header("State", SortKey::Health, app.inventory.sort_key)
-                .width(Length::FillPortion(2)),
-            sort_header("Visibility", SortKey::Scope, app.inventory.sort_key)
-                .width(Length::FillPortion(2)),
-            sort_header("Resources", SortKey::Resources, app.inventory.sort_key)
-                .width(Length::FillPortion(2)),
-            text("Actions")
-                .size(11)
-                .color(theme::SUBTLE)
-                .width(Length::Shrink),
+            text("").width(Length::Fixed(24.0)),
+            sort_header("Skill", SortKey::Name, app.inventory.sort_key).width(Length::Fill),
+            sort_header("Health", SortKey::Health, app.inventory.sort_key),
+            sort_header("Size", SortKey::Resources, app.inventory.sort_key),
+            text("Actions").size(FONT_MICRO).color(TEXT_MUTED),
         ]
-        .spacing(10)
+        .spacing(SPACING_MD)
         .align_y(Alignment::Center),
     )
-    .padding([7, 10])
-    .style(theme::table_header)
     .into()
 }
 
@@ -389,235 +513,153 @@ fn sort_header<'a>(
     let active = key == current;
     button(
         text(if active {
-            format!("{label} sorted")
+            format!("{label} \u{2193}")
         } else {
             label.to_string()
         })
-        .size(11),
+        .size(FONT_MICRO),
     )
-    .padding([4, 6])
-    .style(theme::subtle_button(active))
+    .padding([SPACING_XS, SPACING_SM])
+    .style(theme::pill_button(active))
     .on_press(Message::SortSelected(key))
-}
-
-fn quick_filters(app: &App) -> Element<'_, Message> {
-    let counts = app.counts();
-    row![
-        quick_filter(
-            "Needs attention",
-            counts.warning + counts.invalid + counts.shadowed,
-            HealthFilter::NeedsAttention,
-            app.inventory.health_filter,
-        ),
-        quick_filter(
-            "Invalid",
-            counts.invalid,
-            HealthFilter::Invalid,
-            app.inventory.health_filter,
-        ),
-        quick_filter(
-            "Warnings",
-            counts.warning,
-            HealthFilter::Warning,
-            app.inventory.health_filter,
-        ),
-        quick_filter(
-            "Shadowed",
-            counts.shadowed,
-            HealthFilter::Shadowed,
-            app.inventory.health_filter,
-        ),
-    ]
-    .spacing(8)
-    .align_y(Alignment::Center)
-    .into()
-}
-
-fn quick_filter<'a>(
-    label: &'a str,
-    count: usize,
-    filter: HealthFilter,
-    selected: HealthFilter,
-) -> iced::widget::Button<'a, Message> {
-    button(text(format!("{label} {count}")).size(12))
-        .padding([6, 9])
-        .style(theme::subtle_button(filter == selected))
-        .on_press(Message::HealthFilterSelected(filter))
 }
 
 fn skill_inspector<'a>(
     skill: Option<&'a InstalledSkill>,
-    detail_tab: DetailTab,
     visible_scopes: Vec<SkillScope>,
     pending_remove_skill: Option<&'a PathBuf>,
     busy: bool,
 ) -> iced::widget::Container<'a, Message> {
     match skill {
-        Some(skill) => components::panel(
+        Some(skill) => components::card(
             scrollable(
                 column![
-                    components::section_header("Inspector", "Selected skill"),
                     row![
-                        components::health_chip(skill.health),
+                        components::health_dot(skill.health),
                         components::scope_chip(skill.scope),
                         components::enablement_chip(skill.enablement),
                     ]
-                    .spacing(8)
+                    .spacing(SPACING_SM)
                     .align_y(Alignment::Center),
-                    text(&skill.display_name).size(22).color(theme::TEXT),
-                    detail_tabs(detail_tab),
-                    rule::horizontal(1),
-                    inspector_tab_content(
-                        skill,
-                        detail_tab,
-                        visible_scopes,
-                        pending_remove_skill,
-                        busy
+                    text(&skill.display_name).size(FONT_DISPLAY).color(TEXT),
+                    inspector_section("OVERVIEW", overview_section(skill)),
+                    inspector_section("FILES & PATHS", files_section(skill, visible_scopes)),
+                    inspector_section("DIAGNOSTICS", diagnostics_section(skill)),
+                    inspector_section(
+                        "ACTIONS",
+                        actions_section(skill, pending_remove_skill, busy)
                     ),
                 ]
-                .spacing(10),
+                .spacing(SPACING_LG),
             )
             .height(Length::Fill),
         ),
-        None => components::panel(
+        None => components::card(
             column![
                 components::section_header("Inspector", "No selection"),
                 components::empty_state(
                     "No skill selected",
-                    "Select a skill to inspect metadata, diagnostics, and paths."
+                    "Select a skill to view details, diagnostics, and actions."
                 ),
             ]
-            .spacing(12),
+            .spacing(SPACING_MD),
         ),
     }
 }
 
-fn detail_tabs(current: DetailTab) -> Element<'static, Message> {
-    DetailTab::ALL
-        .into_iter()
-        .fold(row![].spacing(6), |tabs, tab| {
-            tabs.push(
-                button(text(tab.label()).size(12))
-                    .padding([6, 8])
-                    .style(theme::subtle_button(tab == current))
-                    .on_press(Message::DetailTabSelected(tab)),
-            )
-        })
+fn inspector_section<'a>(label: &'a str, content: Element<'a, Message>) -> Element<'a, Message> {
+    column![components::section_label(label), content,]
+        .spacing(SPACING_SM)
         .into()
 }
 
-fn inspector_tab_content<'a>(
-    skill: &'a InstalledSkill,
-    detail_tab: DetailTab,
-    visible_scopes: Vec<SkillScope>,
-    pending_remove_skill: Option<&'a PathBuf>,
-    busy: bool,
-) -> Element<'a, Message> {
-    match detail_tab {
-        DetailTab::Overview => column![
-            detail_row(
-                "Description",
-                skill
-                    .description
-                    .as_deref()
-                    .unwrap_or("No description")
-                    .to_string()
-            ),
-            detail_row("Current target", skill.scope.label().to_string()),
-            detail_row(
-                "Source",
-                skill.source_url.as_deref().unwrap_or("Unknown").to_string()
-            ),
-            detail_row(
-                "Installed",
-                skill
-                    .installed_at
-                    .map(|time| time.to_rfc3339())
-                    .unwrap_or_else(|| "Unknown".to_string()),
-            ),
-            detail_row(
-                "License",
-                skill
-                    .frontmatter
-                    .license
-                    .as_deref()
-                    .unwrap_or("Unknown")
-                    .to_string()
-            ),
-            detail_row(
-                "Compatibility",
-                skill
-                    .frontmatter
-                    .compatibility
-                    .as_deref()
-                    .unwrap_or("Not declared")
-                    .to_string(),
-            ),
-            detail_row(
-                "Tags",
-                if skill.frontmatter.tags.is_empty() {
-                    "None declared".to_string()
-                } else {
-                    skill.frontmatter.tags.join(", ")
-                }
-            ),
-        ]
-        .spacing(10)
-        .into(),
-        DetailTab::Visibility => column![
-            visibility_detail(visible_scopes),
-            detail_row("Folder", skill.root_dir.display().to_string()),
-            detail_row("Skill file", skill.skill_file.display().to_string()),
-            detail_row("Enablement", skill.enablement.label().to_string()),
-            detail_row("Health", skill.health.label().to_string()),
-        ]
-        .spacing(10)
-        .into(),
-        DetailTab::Diagnostics => column![diagnostics_block(skill), metadata_block(skill)]
-            .spacing(10)
-            .into(),
-        DetailTab::Files => column![
-            detail_row(
-                "Resources",
-                format!(
-                    "{} file(s), {}",
-                    skill.resource_count,
-                    format_bytes(skill.resource_bytes)
-                ),
-            ),
-            detail_row(
-                "Allowed tools",
-                if skill.frontmatter.allowed_tools.is_empty() {
-                    "None declared".to_string()
-                } else {
-                    skill.frontmatter.allowed_tools.join(", ")
-                },
-            ),
-            detail_row(
-                "When to use",
-                skill
-                    .frontmatter
-                    .when_to_use
-                    .as_deref()
-                    .unwrap_or("Not declared")
-                    .to_string(),
-            ),
-            detail_row(
-                "Disable model invocation",
-                skill
-                    .frontmatter
-                    .disable_model_invocation
-                    .map(|value| value.to_string())
-                    .unwrap_or_else(|| "Not declared".to_string()),
-            ),
-        ]
-        .spacing(10)
-        .into(),
-        DetailTab::Actions => actions_tab(skill, pending_remove_skill, busy),
-    }
+fn overview_section<'a>(skill: &'a InstalledSkill) -> Element<'a, Message> {
+    column![
+        components::detail_row(
+            "Description",
+            skill.description.as_deref().unwrap_or("No description"),
+        ),
+        components::detail_row("Source", skill.source_url.as_deref().unwrap_or("Unknown"),),
+        components::detail_row(
+            "Installed",
+            skill
+                .installed_at
+                .map(|time| time.format("%Y-%m-%d %H:%M").to_string())
+                .unwrap_or_else(|| "Unknown".to_string()),
+        ),
+        components::detail_row(
+            "License",
+            skill.frontmatter.license.as_deref().unwrap_or("Unknown"),
+        ),
+        components::detail_row(
+            "Compatibility",
+            skill
+                .frontmatter
+                .compatibility
+                .as_deref()
+                .unwrap_or("Not declared"),
+        ),
+        components::detail_row(
+            "Tags",
+            if skill.frontmatter.tags.is_empty() {
+                "None".to_string()
+            } else {
+                skill.frontmatter.tags.join(", ")
+            },
+        ),
+    ]
+    .spacing(SPACING_SM)
+    .into()
 }
 
-fn actions_tab<'a>(
+fn files_section<'a>(
+    skill: &'a InstalledSkill,
+    visible_scopes: Vec<SkillScope>,
+) -> Element<'a, Message> {
+    column![
+        components::detail_row(
+            "Resources",
+            format!(
+                "{} file(s), {}",
+                skill.resource_count,
+                format_bytes(skill.resource_bytes)
+            ),
+        ),
+        components::detail_row("Folder", skill.root_dir.display().to_string()),
+        components::detail_row("Skill file", skill.skill_file.display().to_string()),
+        components::detail_row("Enablement", skill.enablement.label().to_string()),
+        visibility_detail(visible_scopes),
+        components::detail_row(
+            "Allowed tools",
+            if skill.frontmatter.allowed_tools.is_empty() {
+                "None".to_string()
+            } else {
+                skill.frontmatter.allowed_tools.join(", ")
+            },
+        ),
+        components::detail_row(
+            "When to use",
+            skill
+                .frontmatter
+                .when_to_use
+                .as_deref()
+                .unwrap_or("Not declared"),
+        ),
+    ]
+    .spacing(SPACING_SM)
+    .into()
+}
+
+fn diagnostics_section<'a>(skill: &'a InstalledSkill) -> Element<'a, Message> {
+    column![
+        components::diagnostic_lines(&skill.diagnostics, "No diagnostics"),
+        metadata_block(skill),
+    ]
+    .spacing(SPACING_SM)
+    .into()
+}
+
+fn actions_section<'a>(
     skill: &'a InstalledSkill,
     pending_remove_skill: Option<&'a PathBuf>,
     busy: bool,
@@ -633,118 +675,69 @@ fn actions_tab<'a>(
         icons::EYE
     };
     let pending_remove = pending_remove_skill.is_some_and(|path| path == &skill.root_dir);
-    let remove_label = if pending_remove {
-        "Confirm remove"
-    } else {
-        "Remove"
-    };
-    let remove_message = if pending_remove {
-        Message::ConfirmRemoveSkill(skill.root_dir.clone())
-    } else {
-        Message::RequestRemoveSkill(skill.root_dir.clone())
-    };
+    let remove = components::confirm_button(
+        pending_remove,
+        "Remove",
+        "Confirm remove",
+        Some(icons::TRASH),
+        Message::RequestRemoveSkill(skill.root_dir.clone()),
+        Message::ConfirmRemoveSkill(skill.root_dir.clone()),
+        busy,
+    );
 
-    column![
-        text("Enable/disable applies to this target. Directory-scanned targets move disabled skills outside the scanned root.")
-            .size(12)
-            .color(theme::MUTED)
-            .wrapping(text::Wrapping::WordOrGlyph),
-        row![
-            components::primary_button(toggle_label, Some(toggle_icon)).on_press_maybe(
-                (!busy).then_some(Message::SetSkillEnabled(
-                    skill.root_dir.clone(),
-                    !skill.is_enabled(),
-                ))
-            ),
-            components::danger_button(remove_label, Some(icons::TRASH))
-                .on_press_maybe((!busy).then_some(remove_message)),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center),
+    row![
+        components::primary_button(toggle_label, Some(toggle_icon)).on_press_maybe(
+            (!busy).then_some(Message::SetSkillEnabled(
+                skill.root_dir.clone(),
+                !skill.is_enabled(),
+            ))
+        ),
+        remove,
     ]
-    .spacing(10)
+    .spacing(SPACING_MD)
+    .align_y(Alignment::Center)
     .into()
-}
-
-fn visibility_label(scopes: &[SkillScope]) -> String {
-    if scopes.is_empty() {
-        return "Not visible in any target".to_string();
-    }
-
-    format!(
-        "Visible in {}",
-        scopes
-            .iter()
-            .map(|scope| scope.label())
-            .collect::<Vec<_>>()
-            .join(", ")
-    )
 }
 
 fn visibility_detail<'a>(scopes: Vec<SkillScope>) -> iced::widget::Column<'a, Message> {
     column![
-        text("Visible in").size(11).color(theme::SUBTLE),
+        text("Visible in").size(FONT_MICRO).color(TEXT_MUTED),
         visibility_chips(scopes),
     ]
-    .spacing(5)
+    .spacing(SPACING_XS + 2.0)
 }
 
 fn visibility_chips<'a>(scopes: Vec<SkillScope>) -> Element<'a, Message> {
     if scopes.is_empty() {
         return text("Not visible in any target")
-            .size(13)
-            .color(theme::MUTED)
+            .size(FONT_CAPTION)
+            .color(TEXT_MUTED)
             .into();
     }
 
     scopes
         .into_iter()
         .fold(
-            row![].spacing(5).align_y(Alignment::Center),
+            row![].spacing(SPACING_XS + 2.0).align_y(Alignment::Center),
             |chips, scope| chips.push(components::scope_chip(scope)),
         )
         .into()
 }
 
-fn diagnostics_block(skill: &InstalledSkill) -> Element<'_, Message> {
-    if skill.diagnostics.is_empty() {
-        return detail_row("Diagnostics", "No diagnostics".to_string()).into();
-    }
-
-    skill
-        .diagnostics
-        .iter()
-        .fold(
-            column![text("Diagnostics").size(11).color(theme::SUBTLE)].spacing(3),
-            |list, diagnostic| {
-                list.push(
-                    text(format!(
-                        "- {}: {}",
-                        diagnostic.severity.label(),
-                        diagnostic.message
-                    ))
-                    .size(12)
-                    .color(theme::MUTED),
-                )
-            },
-        )
-        .into()
-}
-
 fn metadata_block(skill: &InstalledSkill) -> Element<'_, Message> {
-    if skill.frontmatter.metadata.is_empty() {
-        return detail_row("Metadata", "No extra metadata".to_string()).into();
-    }
-
-    skill
+    let entries: Vec<String> = skill
         .frontmatter
         .metadata
         .iter()
-        .fold(
-            column![text("Metadata").size(11).color(theme::SUBTLE)].spacing(3),
-            |list, (key, value)| {
-                list.push(text(format!("{key}: {value}")).size(12).color(theme::MUTED))
-            },
-        )
-        .into()
+        .map(|(key, value)| format!("{key}: {value}"))
+        .collect();
+
+    if entries.is_empty() {
+        return components::detail_row("Metadata", "No extra metadata").into();
+    }
+
+    components::detail_section(
+        "Metadata",
+        components::text_lines(entries, "No extra metadata", TEXT_SECONDARY, FONT_CAPTION),
+    )
 }

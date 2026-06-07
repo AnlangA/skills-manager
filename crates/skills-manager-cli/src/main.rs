@@ -3,12 +3,15 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use skills_manager_core::{
-    CatalogFormat, ConflictPolicy, InstallRequest, InstallTarget, Installer, ManagerPaths,
-    ProjectRoot, SkillHealth, SkillScaffoldRequest, WorkspaceSnapshot, create_skill_scaffold,
-    doctor_report, download_github_catalog, download_github_skills,
-    download_github_skills_to_cache, export_installed_catalog, list_downloaded_skills,
-    preview_skill_scaffold, remove_downloaded_skills, repair_targets, scan_installed_skills,
-    target_profiles,
+    AgentToolTarget, CatalogFormat, ConflictPolicy, InstallRequest, InstallTarget, Installer,
+    ManagerPaths, MarketplaceSearchProvider, PluginInstallRequest, ProjectRoot, ResourceKind,
+    ResourceManager, SkillHealth, SkillScaffoldRequest, WorkspaceSnapshot, add_marketplace_source,
+    create_skill_scaffold, doctor_report, download_github_catalog, download_github_skills,
+    download_github_skills_to_cache, export_installed_catalog, inspect_marketplace_source,
+    list_downloaded_skills, list_marketplace_sources, preview_skill_scaffold,
+    refresh_marketplace_source, remove_downloaded_skills, remove_marketplace_source,
+    repair_targets, scan_installed_plugins, scan_installed_skills, scan_marketplaces,
+    scan_resources, search_marketplace, target_profiles,
 };
 use tracing_subscriber::EnvFilter;
 
@@ -144,6 +147,18 @@ enum Command {
         #[arg(long, value_enum)]
         target: Option<CliTarget>,
     },
+    Resources {
+        #[command(subcommand)]
+        command: ResourceCommand,
+    },
+    Plugins {
+        #[command(subcommand)]
+        command: PluginCommand,
+    },
+    Marketplaces {
+        #[command(subcommand)]
+        command: MarketplaceCommand,
+    },
 }
 
 impl Command {
@@ -167,8 +182,104 @@ impl Command {
             Self::Enable { .. } => "enable",
             Self::Disable { .. } => "disable",
             Self::Remove { .. } => "remove",
+            Self::Resources { .. } => "resources",
+            Self::Plugins { .. } => "plugins",
+            Self::Marketplaces { .. } => "marketplaces",
         }
     }
+}
+
+#[derive(Debug, Subcommand)]
+enum ResourceCommand {
+    Scan {
+        #[arg(long, value_enum, default_value_t = CliResourceKind::All)]
+        kind: CliResourceKind,
+        #[arg(long, value_enum)]
+        target: Option<CliAgentTarget>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum PluginCommand {
+    Scan {
+        #[arg(long, value_enum)]
+        target: Option<CliAgentTarget>,
+    },
+    Preview {
+        source: PathBuf,
+        #[arg(long, value_enum, default_value_t = CliAgentTarget::Codex)]
+        target: CliAgentTarget,
+        #[arg(long, default_value = "local")]
+        marketplace: String,
+        #[arg(long, value_enum, default_value_t = CliConflictPolicy::Block)]
+        conflict: CliConflictPolicy,
+        #[arg(long)]
+        disable_after_install: bool,
+    },
+    Install {
+        source: PathBuf,
+        #[arg(long, value_enum, default_value_t = CliAgentTarget::Codex)]
+        target: CliAgentTarget,
+        #[arg(long, default_value = "local")]
+        marketplace: String,
+        #[arg(long, value_enum, default_value_t = CliConflictPolicy::Block)]
+        conflict: CliConflictPolicy,
+        #[arg(long)]
+        disable_after_install: bool,
+    },
+    Enable {
+        plugin: String,
+        #[arg(long, value_enum, default_value_t = CliAgentTarget::Codex)]
+        target: CliAgentTarget,
+    },
+    Disable {
+        plugin: String,
+        #[arg(long, value_enum, default_value_t = CliAgentTarget::Codex)]
+        target: CliAgentTarget,
+    },
+    Remove {
+        plugin: String,
+        #[arg(long, value_enum, default_value_t = CliAgentTarget::Codex)]
+        target: CliAgentTarget,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum MarketplaceCommand {
+    Sources {
+        #[command(subcommand)]
+        command: MarketplaceSourceCommand,
+    },
+    Search {
+        #[arg(long, value_enum, default_value_t = CliMarketplaceProvider::Skillsmp)]
+        provider: CliMarketplaceProvider,
+        #[arg(long)]
+        query: String,
+    },
+    Inspect {
+        source: String,
+        #[arg(long, value_enum)]
+        target: Option<CliAgentTarget>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum MarketplaceSourceCommand {
+    List,
+    Add {
+        label: String,
+        source: String,
+        #[arg(long, value_enum)]
+        target: Option<CliAgentTarget>,
+        #[arg(long)]
+        provider: Option<String>,
+    },
+    Refresh {
+        label: String,
+    },
+    Remove {
+        label: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -255,10 +366,61 @@ enum CliTarget {
     #[value(name = "claude-code", alias = "claude", alias = "claudecode")]
     ClaudeCode,
     Droid,
-    #[value(alias = "opencode")]
-    Pencode,
+    #[value(name = "opencode", alias = "open-code", alias = "pencode")]
+    OpenCode,
     Codex,
     Zed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum CliResourceKind {
+    All,
+    Skill,
+    Plugin,
+    Marketplace,
+}
+
+impl CliResourceKind {
+    fn matches(self, kind: ResourceKind) -> bool {
+        match self {
+            Self::All => true,
+            Self::Skill => kind == ResourceKind::Skill,
+            Self::Plugin => kind == ResourceKind::Plugin,
+            Self::Marketplace => kind == ResourceKind::Marketplace,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum CliAgentTarget {
+    Generic,
+    Codex,
+    #[value(name = "claude-code", alias = "claude", alias = "claudecode")]
+    ClaudeCode,
+}
+
+impl From<CliAgentTarget> for AgentToolTarget {
+    fn from(value: CliAgentTarget) -> Self {
+        match value {
+            CliAgentTarget::Generic => Self::Generic,
+            CliAgentTarget::Codex => Self::Codex,
+            CliAgentTarget::ClaudeCode => Self::ClaudeCode,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum CliMarketplaceProvider {
+    #[value(name = "skillsmp", alias = "skills-mp")]
+    Skillsmp,
+}
+
+impl From<CliMarketplaceProvider> for MarketplaceSearchProvider {
+    fn from(value: CliMarketplaceProvider) -> Self {
+        match value {
+            CliMarketplaceProvider::Skillsmp => Self::SkillsMp,
+        }
+    }
 }
 
 impl From<CliScope> for CliTarget {
@@ -277,7 +439,7 @@ impl From<CliTarget> for InstallTarget {
             CliTarget::Project => Self::Project,
             CliTarget::ClaudeCode => Self::ClaudeCode,
             CliTarget::Droid => Self::Droid,
-            CliTarget::Pencode => Self::Pencode,
+            CliTarget::OpenCode => Self::OpenCode,
             CliTarget::Codex => Self::Codex,
             CliTarget::Zed => Self::Zed,
         }
@@ -549,6 +711,137 @@ async fn run_command(
         Command::Remove { path, target } => {
             let backup = installer.remove(&skill_root(paths, target, path)?)?;
             Ok(CommandOutput::RemovedSkill { backup })
+        }
+        Command::Resources { command } => run_resource_command(command, paths),
+        Command::Plugins { command } => run_plugin_command(command, paths).await,
+        Command::Marketplaces { command } => run_marketplace_command(command, paths).await,
+    }
+}
+
+fn run_resource_command(command: ResourceCommand, paths: &ManagerPaths) -> Result<CommandOutput> {
+    match command {
+        ResourceCommand::Scan { kind, target } => {
+            let mut resources = match kind {
+                CliResourceKind::Plugin => scan_installed_plugins(paths)?,
+                CliResourceKind::Marketplace => scan_marketplaces(paths)?,
+                _ => scan_resources(paths)?,
+            };
+            resources.retain(|resource| kind.matches(resource.kind));
+            if let Some(target) = target {
+                let target = AgentToolTarget::from(target);
+                resources.retain(|resource| resource.target == target);
+            }
+            Ok(CommandOutput::Resources { resources })
+        }
+    }
+}
+
+async fn run_plugin_command(command: PluginCommand, paths: &ManagerPaths) -> Result<CommandOutput> {
+    let manager = ResourceManager::new(paths.clone());
+    match command {
+        PluginCommand::Scan { target } => {
+            let mut plugins = manager.scan_plugins()?;
+            if let Some(target) = target {
+                let target = AgentToolTarget::from(target);
+                plugins.retain(|plugin| plugin.target == target);
+            }
+            Ok(CommandOutput::Plugins { plugins })
+        }
+        PluginCommand::Preview {
+            source,
+            target,
+            marketplace,
+            conflict,
+            disable_after_install,
+        } => {
+            let preview = manager.preview_plugin_install(PluginInstallRequest {
+                source_root: source,
+                source_url: None,
+                target: target.into(),
+                marketplace: Some(marketplace),
+                conflict_policy: conflict.into(),
+                enable_after_install: !disable_after_install,
+            })?;
+            Ok(CommandOutput::PluginPreview { preview })
+        }
+        PluginCommand::Install {
+            source,
+            target,
+            marketplace,
+            conflict,
+            disable_after_install,
+        } => {
+            let result = manager.install_plugin(PluginInstallRequest {
+                source_root: source,
+                source_url: None,
+                target: target.into(),
+                marketplace: Some(marketplace),
+                conflict_policy: conflict.into(),
+                enable_after_install: !disable_after_install,
+            })?;
+            Ok(CommandOutput::PluginInstall { result })
+        }
+        PluginCommand::Enable { plugin, target } => {
+            manager.set_plugin_enabled(target.into(), &plugin, true)?;
+            Ok(CommandOutput::Status {
+                message: "Enabled plugin.".to_string(),
+            })
+        }
+        PluginCommand::Disable { plugin, target } => {
+            manager.set_plugin_enabled(target.into(), &plugin, false)?;
+            Ok(CommandOutput::Status {
+                message: "Disabled plugin.".to_string(),
+            })
+        }
+        PluginCommand::Remove { plugin, target } => {
+            let backup = manager.remove_plugin(target.into(), &plugin)?;
+            Ok(CommandOutput::RemovedPlugin { backup })
+        }
+    }
+}
+
+async fn run_marketplace_command(
+    command: MarketplaceCommand,
+    paths: &ManagerPaths,
+) -> Result<CommandOutput> {
+    match command {
+        MarketplaceCommand::Sources { command } => match command {
+            MarketplaceSourceCommand::List => {
+                let sources = list_marketplace_sources(paths)?;
+                Ok(CommandOutput::MarketplaceSources { sources })
+            }
+            MarketplaceSourceCommand::Add {
+                label,
+                source,
+                target,
+                provider,
+            } => {
+                let source = add_marketplace_source(
+                    paths,
+                    &label,
+                    &source,
+                    target.map(AgentToolTarget::from),
+                    provider,
+                )?;
+                Ok(CommandOutput::MarketplaceSource { source })
+            }
+            MarketplaceSourceCommand::Refresh { label } => {
+                let marketplace = refresh_marketplace_source(paths, &label).await?;
+                Ok(CommandOutput::MarketplaceInspect { marketplace })
+            }
+            MarketplaceSourceCommand::Remove { label } => {
+                let label = remove_marketplace_source(paths, &label)?;
+                Ok(CommandOutput::RemovedMarketplaceSource { label })
+            }
+        },
+        MarketplaceCommand::Search { provider, query } => {
+            let result = search_marketplace(provider.into(), &query).await?;
+            Ok(CommandOutput::MarketplaceSearch { result })
+        }
+        MarketplaceCommand::Inspect { source, target } => {
+            let marketplace =
+                inspect_marketplace_source(&source, target.map(AgentToolTarget::from)).await?;
+            Ok(CommandOutput::MarketplaceInspect { marketplace })
         }
     }
 }

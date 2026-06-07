@@ -28,7 +28,7 @@ The CLI currently exposes these built-in targets:
 - `project`
 - `claude-code`
 - `droid`
-- `pencode`
+- `opencode`
 - `codex`
 - `zed`
 

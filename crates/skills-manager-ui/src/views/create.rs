@@ -1,15 +1,16 @@
 use iced::{
     Alignment, Element, Length,
-    widget::{checkbox, column, pick_list, row, scrollable, text},
+    widget::{checkbox, column, row, scrollable, text},
 };
 use skills_manager_core::{SkillScaffoldPreview, format_bytes};
 
+use crate::theme::*;
 use crate::{
     app::{App, Message, UiScope},
-    components, icons, theme,
+    components, icons,
 };
 
-use super::detail_row;
+use super::strategy_label;
 
 pub fn view(app: &App) -> Element<'_, Message> {
     let can_preview = !app.busy
@@ -18,109 +19,62 @@ pub fn view(app: &App) -> Element<'_, Message> {
         && (app.create.target != UiScope::Custom || !app.create.custom_path.trim().is_empty());
     let can_create = can_preview && app.create.preview.is_some();
 
-    let form = components::panel(scrollable(
+    let form = components::card(scrollable(
         column![
-            components::section_header(
-                "Create skill",
-                "Scaffold a target-aware SKILL.md before installing or sharing it"
-            ),
+            components::section_header("New Skill", "Scaffold a SKILL.md for a target"),
             components::field(
                 "Name",
-                "Use lowercase letters, numbers, hyphens, or underscores.",
+                "Lowercase, numbers, hyphens, or underscores.",
                 "my-skill",
                 &app.create.name,
                 Message::CreateNameChanged,
             ),
             components::field(
                 "Description",
-                "Explain what the skill does and when the agent should use it.",
+                "What the skill does and when to use it.",
                 "Use this skill when...",
                 &app.create.description,
                 Message::CreateDescriptionChanged,
             ),
             target_controls(app),
-            components::field(
-                "Tags",
-                "Comma-separated discovery tags for Codex/Zed-compatible metadata.",
-                "analysis,docs,automation",
-                &app.create.tags,
-                Message::CreateTagsChanged,
-            ),
-            components::field(
-                "Allowed tools",
-                "Comma-separated tools for agents that honor allowed-tools.",
-                "shell,browser",
-                &app.create.allowed_tools,
-                Message::CreateAllowedToolsChanged,
-            ),
-            components::field(
-                "When to use",
-                "Claude Code specific trigger guidance.",
-                "Use when the user asks to...",
-                &app.create.when_to_use,
-                Message::CreateWhenToUseChanged,
-            ),
-            components::field(
-                "Compatibility",
-                "Optional compatibility notes.",
-                "Claude Code, Codex, Zed",
-                &app.create.compatibility,
-                Message::CreateCompatibilityChanged,
-            ),
-            components::field(
-                "License",
-                "Optional license string.",
-                "MIT",
-                &app.create.license,
-                Message::CreateLicenseChanged,
-            ),
-            row![
-                checkbox(app.create.disable_model_invocation)
-                    .size(18)
-                    .on_toggle(Message::CreateDisableModelInvocationChanged),
-                text("Disable model invocation").size(13).color(theme::TEXT),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center),
+            advanced_section(app),
             row![
                 components::primary_button("Preview", Some(icons::SEARCH))
                     .on_press_maybe(can_preview.then_some(Message::PreviewScaffold)),
                 components::primary_button("Create", Some(icons::FILE))
                     .on_press_maybe(can_create.then_some(Message::CreateSkill)),
             ]
-            .spacing(8),
+            .spacing(SPACING_MD),
         ]
-        .spacing(12),
+        .spacing(SPACING_LG),
     ))
     .width(Length::FillPortion(2))
     .height(Length::Fill);
 
-    let preview = components::panel(
+    let preview = components::card(
         column![
             components::section_header("Preview", preview_meta(app.create.preview.as_ref())),
             scrollable(preview_body(app.create.preview.as_ref())).height(Length::Fill),
         ]
-        .spacing(12),
+        .spacing(SPACING_MD),
     )
     .width(Length::FillPortion(3))
     .height(Length::Fill);
 
-    row![form, preview].spacing(14).height(Length::Fill).into()
+    components::form_preview_layout(form, preview)
 }
 
 fn target_controls(app: &App) -> Element<'_, Message> {
     let mut controls = column![
-        text("Target").size(12).color(theme::TEXT),
-        pick_list(
-            UiScope::ALL,
+        components::section_label("TARGET"),
+        components::styled_pick_list(
+            &UiScope::ALL,
             Some(app.create.target),
             Message::CreateTargetSelected,
-        )
-        .padding([9, 12])
-        .style(theme::select)
-        .width(Length::Fill),
+            Length::Fill,
+        ),
     ]
-    .spacing(5);
+    .spacing(SPACING_XS + 2.0);
 
     if app.create.target == UiScope::Custom {
         controls = controls.push(components::compact_field(
@@ -139,7 +93,7 @@ fn target_controls(app: &App) -> Element<'_, Message> {
     {
         controls = controls.push(
             text(format!(
-                "{} strategy at {}",
+                "{} at {}",
                 strategy_label(profile.enablement_strategy),
                 profile
                     .skills_root
@@ -147,13 +101,67 @@ fn target_controls(app: &App) -> Element<'_, Message> {
                     .map(|path| path.display().to_string())
                     .unwrap_or_else(|| "unavailable".to_string())
             ))
-            .size(11)
-            .color(theme::SUBTLE)
+            .size(FONT_MICRO)
+            .color(TEXT_MUTED)
             .wrapping(text::Wrapping::WordOrGlyph),
         );
     }
 
     controls.into()
+}
+
+fn advanced_section(app: &App) -> Element<'_, Message> {
+    column![
+        components::section_label("ADVANCED OPTIONS"),
+        components::field(
+            "Tags",
+            "Comma-separated discovery tags.",
+            "analysis,docs,automation",
+            &app.create.tags,
+            Message::CreateTagsChanged,
+        ),
+        components::field(
+            "Allowed tools",
+            "Comma-separated tools.",
+            "shell,browser",
+            &app.create.allowed_tools,
+            Message::CreateAllowedToolsChanged,
+        ),
+        components::field(
+            "When to use",
+            "Claude Code trigger guidance.",
+            "Use when the user asks to...",
+            &app.create.when_to_use,
+            Message::CreateWhenToUseChanged,
+        ),
+        row![
+            iced::widget::container(components::compact_field(
+                "Compatibility",
+                "Claude Code, Codex, Zed",
+                &app.create.compatibility,
+                Message::CreateCompatibilityChanged,
+            ))
+            .width(Length::FillPortion(1)),
+            iced::widget::container(components::compact_field(
+                "License",
+                "MIT",
+                &app.create.license,
+                Message::CreateLicenseChanged,
+            ))
+            .width(Length::FillPortion(1)),
+        ]
+        .spacing(SPACING_MD),
+        row![
+            checkbox(app.create.disable_model_invocation)
+                .size(18)
+                .on_toggle(Message::CreateDisableModelInvocationChanged),
+            text("Disable model invocation").size(FONT_BODY).color(TEXT),
+        ]
+        .spacing(SPACING_SM)
+        .align_y(Alignment::Center),
+    ]
+    .spacing(SPACING_MD)
+    .into()
 }
 
 fn preview_meta(preview: Option<&SkillScaffoldPreview>) -> String {
@@ -178,61 +186,29 @@ fn preview_body(preview: Option<&SkillScaffoldPreview>) -> Element<'_, Message> 
     let Some(preview) = preview else {
         return components::empty_state(
             "No preview yet",
-            "Fill in a name and description, then preview the generated SKILL.md.",
+            "Fill in a name and description, then preview.",
         )
         .into();
     };
 
     column![
         row![
-            components::health_chip(preview.health),
+            components::health_dot(preview.health),
             components::scope_chip(preview.scope),
         ]
-        .spacing(8)
+        .spacing(SPACING_SM)
         .align_y(Alignment::Center),
-        detail_row("Folder", preview.destination_root.display().to_string()),
-        detail_row("Skill file", preview.skill_file.display().to_string()),
-        detail_row("Resources", format!("0 file(s), {}", format_bytes(0)),),
-        scaffold_diagnostics(preview),
-        components::flat_panel(
+        components::detail_row("Folder", preview.destination_root.display().to_string()),
+        components::detail_row("Skill file", preview.skill_file.display().to_string()),
+        components::detail_row("Resources", format!("0 file(s), {}", format_bytes(0))),
+        components::diagnostic_lines(&preview.diagnostics, "No diagnostics"),
+        components::flat_card(
             text(&preview.content)
-                .size(12)
-                .color(theme::TEXT)
+                .size(FONT_CAPTION)
+                .color(TEXT)
                 .wrapping(text::Wrapping::WordOrGlyph)
         ),
     ]
-    .spacing(10)
+    .spacing(SPACING_MD)
     .into()
-}
-
-fn scaffold_diagnostics(preview: &SkillScaffoldPreview) -> Element<'_, Message> {
-    if preview.diagnostics.is_empty() {
-        return text("No diagnostics").size(12).color(theme::SUBTLE).into();
-    }
-
-    preview
-        .diagnostics
-        .iter()
-        .fold(
-            column![text("Diagnostics").size(11).color(theme::SUBTLE)].spacing(3),
-            |list, diagnostic| {
-                list.push(
-                    text(format!(
-                        "- {}: {}",
-                        diagnostic.severity.label(),
-                        diagnostic.message
-                    ))
-                    .size(12)
-                    .color(theme::MUTED),
-                )
-            },
-        )
-        .into()
-}
-
-fn strategy_label(strategy: skills_manager_core::EnablementStrategy) -> &'static str {
-    match strategy {
-        skills_manager_core::EnablementStrategy::ConfigToggle => "Config toggle",
-        skills_manager_core::EnablementStrategy::DirectoryMove => "Directory move",
-    }
 }

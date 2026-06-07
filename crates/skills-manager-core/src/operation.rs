@@ -7,17 +7,25 @@ use crate::{
     InstallCandidate, InstallPreview, InstallRequest, Result, SkillScope, SkillsManagerError,
 };
 
+/// Serializable plan describing a staged install operation.
 #[derive(Debug, Clone, Serialize)]
 pub struct OperationPlan {
+    /// Deterministic identifier for logs and persistence.
     pub id: String,
+    /// Original install request used to build the plan.
     pub request: InstallRequest,
+    /// Computed target scope.
     pub scope: SkillScope,
+    /// Computed destination root.
     pub destination_root: PathBuf,
+    /// Planned candidates, one per discovered skill.
     pub candidates: Vec<InstallCandidate>,
+    /// Timestamp when the plan was created.
     pub created_at: DateTime<Utc>,
 }
 
 impl OperationPlan {
+    /// Creates a new operation plan from request parameters.
     pub fn new(
         request: InstallRequest,
         scope: SkillScope,
@@ -42,6 +50,7 @@ impl OperationPlan {
         }
     }
 
+    /// Returns a preview payload that carries the same candidate list with context.
     pub fn preview(&self) -> InstallPreview {
         InstallPreview {
             scope: self.scope,
@@ -52,6 +61,7 @@ impl OperationPlan {
     }
 }
 
+/// Tracks files and directories created/moved during an operation for rollback.
 #[derive(Debug, Default)]
 pub(crate) struct OperationJournal {
     created_roots: Vec<PathBuf>,
@@ -59,14 +69,17 @@ pub(crate) struct OperationJournal {
 }
 
 impl OperationJournal {
+    /// Records a newly created path that should be removed on rollback.
     pub fn record_created(&mut self, path: PathBuf) {
         self.created_roots.push(path);
     }
 
+    /// Records a move from `from` to `to` that should be reversed on rollback.
     pub fn record_move(&mut self, from: PathBuf, to: PathBuf) {
         self.moved_roots.push((from, to));
     }
 
+    /// Revert all tracked operations in reverse order and return failures.
     pub fn rollback(&mut self) -> Vec<String> {
         let mut failures = Vec::new();
 
@@ -91,6 +104,7 @@ impl OperationJournal {
     }
 }
 
+/// Applies `result`, returning success values unchanged and rolling back on errors.
 pub(crate) fn rollback_on_error<T>(journal: &mut OperationJournal, result: Result<T>) -> Result<T> {
     match result {
         Ok(value) => Ok(value),

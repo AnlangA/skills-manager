@@ -21,19 +21,31 @@ const MIN_DESCRIPTION_LENGTH: usize = 12;
 const MAX_COMPATIBILITY_LENGTH: usize = 1000;
 const RESOURCE_WARNING_BYTES: u64 = 25 * 1024 * 1024;
 const RESOURCE_WARNING_FILES: usize = 100;
+/// Directory used for disabled skill bundles in current layout.
 pub const DISABLED_SKILLS_DIR: &str = ".skills-disabled";
+/// Legacy disabled skill directory retained for backward compatibility.
 pub const LEGACY_DISABLED_SKILLS_DIR: &str = ".disabled";
 
+/// A candidate discovered from a skill directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkillCandidate {
+    /// Root directory of the candidate.
     pub root_dir: PathBuf,
+    /// Absolute path to `SKILL.md`.
     pub skill_file: PathBuf,
+    /// Parsed frontmatter metadata.
     pub frontmatter: SkillFrontmatter,
+    /// Normalized candidate name used for sorting and duplicate suppression.
     pub normalized_name: String,
+    /// Search tokens used for fuzzy/substring skill inventory search.
     pub search_haystack: String,
+    /// Frontmatter and structure validation diagnostics.
     pub diagnostics: Vec<SkillDiagnostic>,
+    /// Derived health state.
     pub health: SkillHealth,
+    /// Resource file count for this candidate.
     pub resource_count: usize,
+    /// Resource byte size for this candidate.
     pub resource_bytes: u64,
 }
 
@@ -61,6 +73,10 @@ struct ResourceSummary {
     bytes: u64,
 }
 
+/// Scan all installed skills across known roots.
+///
+/// This loads manager and Codex configs, discovers enabled/disabled candidates for each root,
+/// applies diagnostics, sorts by target priority, and marks shadowed identities.
 pub fn scan_installed_skills(paths: &ManagerPaths) -> Result<Vec<InstalledSkill>> {
     info!("scanning installed skills");
     let app_config = ManagerConfig::load(paths)?;
@@ -240,6 +256,10 @@ fn dedupe_roots(roots: Vec<(SkillScope, PathBuf)>) -> Vec<(SkillScope, PathBuf)>
     deduped
 }
 
+/// Discover skill candidates by searching `SKILL.md` files.
+///
+/// Discovery is depth-limited and skips `.skills-disabled`, `.disabled`, and
+/// backup folders.
 pub fn discover_skill_candidates(root: &Path) -> Result<Vec<SkillCandidate>> {
     if !root.exists() {
         debug!(root = %root.display(), "candidate root does not exist");
@@ -317,6 +337,7 @@ fn enabled_root_for_disabled_root(skills_root: &Path, disabled_root: &Path) -> P
         .unwrap_or_else(|_| disabled_root.to_path_buf())
 }
 
+/// Compute the current-layout disabled-root sibling for the given skills root.
 pub fn disabled_store_root_for_skills_root(skills_root: &Path) -> PathBuf {
     skills_root
         .parent()
@@ -324,6 +345,7 @@ pub fn disabled_store_root_for_skills_root(skills_root: &Path) -> PathBuf {
         .join(DISABLED_SKILLS_DIR)
 }
 
+/// Read one skill candidate from explicit file and root inputs.
 pub fn read_skill_candidate(root_dir: PathBuf, skill_file: PathBuf) -> SkillCandidate {
     let summary = resource_summary(&root_dir);
     read_skill_candidate_with_summary(root_dir, skill_file, summary)
@@ -366,6 +388,9 @@ fn read_skill_candidate_with_summary(
     }
 }
 
+/// Parse skill metadata from `SKILL.md`.
+///
+/// Returns default metadata when no frontmatter block exists.
 pub fn parse_skill_frontmatter(skill_file: &Path) -> Result<SkillFrontmatter> {
     let content = fs::read_to_string(skill_file)?;
     let Some(frontmatter) = extract_frontmatter(&content) else {
@@ -406,6 +431,9 @@ pub fn parse_skill_frontmatter(skill_file: &Path) -> Result<SkillFrontmatter> {
     })
 }
 
+/// Validate frontmatter fields and resource footprint.
+///
+/// This checks required fields, naming policy, and warning thresholds for size.
 pub fn validate_skill(
     root_dir: &Path,
     frontmatter: &SkillFrontmatter,
@@ -494,6 +522,7 @@ pub fn validate_skill(
     diagnostics
 }
 
+/// Derive normalized [`SkillHealth`] from diagnostics and optional shadowed marker.
 pub fn health_from_diagnostics(diagnostics: &[SkillDiagnostic], shadowed: bool) -> SkillHealth {
     if diagnostics
         .iter()
@@ -512,10 +541,12 @@ pub fn health_from_diagnostics(diagnostics: &[SkillDiagnostic], shadowed: bool) 
     }
 }
 
+/// Convert a filesystem path to a stable configuration key.
 pub fn path_key(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }
 
+/// Format bytes in human-readable binary units.
 pub fn format_bytes(bytes: u64) -> String {
     const UNITS: [&str; 4] = ["B", "KiB", "MiB", "GiB"];
     let mut value = bytes as f64;
@@ -571,6 +602,9 @@ fn sort_skills(skills: &mut [InstalledSkill]) {
     });
 }
 
+/// Compute identity key for duplicate/scope collision resolution.
+///
+/// Uses normalized frontmatter name when available, otherwise normalized folder name.
 pub fn installed_skill_identity(skill: &InstalledSkill) -> String {
     skill
         .frontmatter
@@ -581,6 +615,7 @@ pub fn installed_skill_identity(skill: &InstalledSkill) -> String {
         .unwrap_or_else(|| sanitize_folder_name(&skill.destination_name()))
 }
 
+/// Return enabled scopes that currently expose this skill identity.
 pub fn visible_skill_scopes<'a>(
     skills: impl IntoIterator<Item = &'a InstalledSkill>,
     skill: &InstalledSkill,
@@ -768,6 +803,7 @@ pub(crate) fn unique_folder_name(
     unreachable!("the loop always returns")
 }
 
+/// Normalize a free-form skill name into a directory-friendly identifier.
 pub fn sanitize_folder_name(name: &str) -> String {
     name.chars()
         .map(|ch| {

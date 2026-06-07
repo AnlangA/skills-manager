@@ -4,44 +4,63 @@ use serde::{Deserialize, Serialize};
 
 use crate::{InstalledSkill, Result, SkillsManagerError};
 
+/// Parsed skills catalog loaded from local files or remote JSON payloads.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkillCatalog {
+    /// Optional catalog display name.
     #[serde(default)]
     pub name: Option<String>,
+    /// List of catalog entries, accepting legacy `plugins` aliases.
     #[serde(default, alias = "plugins")]
     pub skills: Vec<SkillCatalogEntry>,
 }
 
+/// Single catalog row used for import/export workflows.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkillCatalogEntry {
+    /// Canonical machine name.
     pub name: String,
+    /// Optional display label.
     #[serde(default)]
     pub display_name: Option<String>,
+    /// Optional description.
     #[serde(default)]
     pub description: Option<String>,
+    /// Source descriptor (github/local/legacy).
     #[serde(flatten)]
     pub source: SkillCatalogSource,
 }
 
+/// Discriminated source specification for a catalog row.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "source", rename_all = "kebab-case")]
 pub enum SkillCatalogSource {
+    /// Source from GitHub repository plus optional path.
     Git {
+        /// Repository URL.
         url: String,
+        /// Optional path inside repository.
         #[serde(default)]
         path: Option<String>,
     },
+    /// Source from filesystem.
     Local {
+        /// Local path.
         path: String,
     },
+    /// Unknown source shape preserved for tolerant parsing.
     #[serde(other)]
     Unknown,
 }
 
+/// Supported export output formats.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CatalogFormat {
+    /// Pretty JSON.
     Json,
+    /// XML string output.
     Xml,
+    /// Markdown table.
     Markdown,
 }
 
@@ -59,6 +78,7 @@ struct ExportedSkill {
 }
 
 impl SkillCatalog {
+    /// Loads and parses a catalog JSON file.
     pub fn load_file(path: &Path) -> Result<Self> {
         let raw = fs::read_to_string(path)?;
         serde_json::from_str(&raw).map_err(|source| SkillsManagerError::ParseCatalog {
@@ -68,6 +88,7 @@ impl SkillCatalog {
     }
 }
 
+/// Exports only usable/enableable skills to the selected format.
 pub fn export_installed_catalog(
     name: impl Into<String>,
     skills: &[InstalledSkill],

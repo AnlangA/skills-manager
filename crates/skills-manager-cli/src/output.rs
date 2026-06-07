@@ -4,73 +4,91 @@ use clap::ValueEnum;
 use serde::Serialize;
 use skills_manager_core::{
     DoctorReport, DownloadedSkillEntry, InstallPreview, InstallResult, InstalledSkill,
-    RepairReport, SkillCatalog, SkillScaffoldPreview, TargetProfile, WorkspaceSnapshot,
-    format_bytes,
+    ManagedResource, MarketplaceDocument, MarketplaceSearchResult, MarketplaceSourceRecord,
+    PluginInstallPreview, PluginInstallResult, RepairReport, SkillCatalog, SkillScaffoldPreview,
+    TargetProfile, WorkspaceSnapshot, format_bytes,
 };
 
+/// Supported output formats for command responses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum OutputMode {
+    /// Human-readable text output.
     Text,
+    /// Stable JSON envelope (legacy variant).
     Json,
+    /// Versioned JSON envelope for machine readers.
     JsonV3,
 }
 
+/// Public command output payloads serialized by the CLI.
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CommandOutput {
-    Workspace {
-        snapshot: WorkspaceSnapshot,
-    },
-    Skills {
-        skills: Vec<InstalledSkill>,
-    },
+    /// Workspace snapshot command result.
+    Workspace { snapshot: WorkspaceSnapshot },
+    /// Installed skills listing.
+    Skills { skills: Vec<InstalledSkill> },
+    /// Validation output with invalid count.
     Validation {
         skills: Vec<InstalledSkill>,
         invalid: usize,
     },
-    Targets {
-        targets: Vec<TargetProfile>,
-    },
-    Doctor {
-        report: DoctorReport,
-    },
-    Repair {
-        report: RepairReport,
-    },
+    /// Target profile listing.
+    Targets { targets: Vec<TargetProfile> },
+    /// Doctor summary and diagnostics.
+    Doctor { report: DoctorReport },
+    /// Repair action summary.
+    Repair { report: RepairReport },
+    /// Scaffold preview.
     Scaffold {
         dry_run: bool,
         preview: SkillScaffoldPreview,
     },
-    Preview {
-        preview: InstallPreview,
-    },
-    Install {
-        result: InstallResult,
-    },
-    Download {
-        entry: DownloadedSkillEntry,
-    },
+    /// Install preview output.
+    Preview { preview: InstallPreview },
+    /// Install execution output.
+    Install { result: InstallResult },
+    /// Single downloaded skill entry.
+    Download { entry: DownloadedSkillEntry },
+    /// All downloaded catalog entries.
     Downloads {
         downloads: Vec<DownloadedSkillEntry>,
     },
-    RemovedDownload {
-        path: PathBuf,
+    /// Result confirming a download entry was removed.
+    RemovedDownload { path: PathBuf },
+    /// Serialized catalog export payload.
+    CatalogExport { format: String, catalog: String },
+    /// Parsed catalog payload loaded from file or URL.
+    LoadedCatalog { catalog: SkillCatalog },
+    /// Generic status message.
+    Status { message: String },
+    /// Path backup after removing a skill.
+    RemovedSkill { backup: PathBuf },
+    /// Inventory resources list.
+    Resources { resources: Vec<ManagedResource> },
+    /// Discovered plugins list.
+    Plugins { plugins: Vec<ManagedResource> },
+    /// Plugin install preview for a single plugin target.
+    PluginPreview { preview: PluginInstallPreview },
+    /// Plugin install execution result.
+    PluginInstall { result: PluginInstallResult },
+    /// Path backup after plugin removal.
+    RemovedPlugin { backup: PathBuf },
+    /// Configured marketplace sources.
+    MarketplaceSources {
+        sources: Vec<MarketplaceSourceRecord>,
     },
-    CatalogExport {
-        format: String,
-        catalog: String,
-    },
-    LoadedCatalog {
-        catalog: SkillCatalog,
-    },
-    Status {
-        message: String,
-    },
-    RemovedSkill {
-        backup: PathBuf,
-    },
+    /// Single configured marketplace source record.
+    MarketplaceSource { source: MarketplaceSourceRecord },
+    /// Removed marketplace source label result.
+    RemovedMarketplaceSource { label: String },
+    /// Marketplace inspection payload from source.
+    MarketplaceInspect { marketplace: MarketplaceDocument },
+    /// Marketplace search result.
+    MarketplaceSearch { result: MarketplaceSearchResult },
 }
 
+/// Write command output using selected mode.
 pub fn write_output(mode: OutputMode, command: &str, output: &CommandOutput) -> anyhow::Result<()> {
     match mode {
         OutputMode::Text => write_text_output(output),
@@ -316,6 +334,108 @@ fn write_text_output(output: &CommandOutput) -> anyhow::Result<()> {
         CommandOutput::RemovedSkill { backup } => {
             println!("Removed skill. Backup: {}", backup.display());
         }
+        CommandOutput::Resources { resources } => {
+            if resources.is_empty() {
+                println!("No resources found.");
+            }
+            for resource in resources {
+                print_resource_line(resource);
+            }
+        }
+        CommandOutput::Plugins { plugins } => {
+            if plugins.is_empty() {
+                println!("No plugins found.");
+            }
+            for plugin in plugins {
+                print_resource_line(plugin);
+            }
+        }
+        CommandOutput::PluginPreview { preview } => {
+            println!(
+                "Plugin preview: {} [{}] -> {}",
+                preview.manifest.name,
+                preview.manifest.target.label(),
+                preview
+                    .operation_plan
+                    .destination_root
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| "delegated command".to_string())
+            );
+            for diagnostic in &preview.operation_plan.diagnostics {
+                println!(
+                    "  - {}: {}",
+                    diagnostic.severity.label(),
+                    diagnostic.message
+                );
+            }
+            for command in &preview.operation_plan.commands {
+                println!("  command: {command}");
+            }
+        }
+        CommandOutput::PluginInstall { result } => {
+            if let Some(path) = &result.installed {
+                println!("Installed plugin: {}", path.display());
+            }
+            if let Some(backup) = &result.backup {
+                println!("Backup: {}", backup.display());
+            }
+            if let Some(output) = &result.command_output {
+                print!("{output}");
+            }
+        }
+        CommandOutput::RemovedPlugin { backup } => {
+            println!("Removed plugin. Backup: {}", backup.display());
+        }
+        CommandOutput::MarketplaceSources { sources } => {
+            if sources.is_empty() {
+                println!("No marketplace sources configured.");
+            }
+            for source in sources {
+                println!(
+                    "{} [{}] {}",
+                    source.label,
+                    source.target.as_deref().unwrap_or("generic"),
+                    source.source
+                );
+            }
+        }
+        CommandOutput::MarketplaceSource { source } => {
+            println!("Marketplace source: {} -> {}", source.label, source.source);
+        }
+        CommandOutput::RemovedMarketplaceSource { label } => {
+            println!("Removed marketplace source: {label}");
+        }
+        CommandOutput::MarketplaceInspect { marketplace } => {
+            println!(
+                "Marketplace: {} [{}] {} plugin(s)",
+                marketplace.name,
+                marketplace.target.label(),
+                marketplace.entries.len()
+            );
+            for entry in &marketplace.entries {
+                println!(
+                    "- {}: {}",
+                    entry.name,
+                    entry.description.as_deref().unwrap_or("No description")
+                );
+            }
+        }
+        CommandOutput::MarketplaceSearch { result } => {
+            println!(
+                "{} result(s) from {} for `{}`.",
+                result.entries.len(),
+                result.provider.label(),
+                result.query
+            );
+            for entry in &result.entries {
+                println!(
+                    "- {}: {}",
+                    entry.name,
+                    entry.description.as_deref().unwrap_or("No description")
+                );
+            }
+        }
     }
 
     Ok(())
@@ -333,6 +453,23 @@ fn print_skill_line(skill: &InstalledSkill) {
         format_bytes(skill.resource_bytes),
         skill.source_url.as_deref().unwrap_or("unknown"),
         skill
+            .installed_at
+            .map(|time| time.to_rfc3339())
+            .unwrap_or_else(|| "unknown".to_string())
+    );
+}
+
+fn print_resource_line(resource: &ManagedResource) {
+    println!(
+        "{} [{} {}] {} / {} - {} | source: {} | installed: {}",
+        resource.display_name,
+        resource.target.label(),
+        resource.kind.label(),
+        resource.enablement.label(),
+        resource.health.label(),
+        resource.root_dir.display(),
+        resource.source_url.as_deref().unwrap_or("unknown"),
+        resource
             .installed_at
             .map(|time| time.to_rfc3339())
             .unwrap_or_else(|| "unknown".to_string())

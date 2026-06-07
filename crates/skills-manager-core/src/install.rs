@@ -22,54 +22,73 @@ use crate::{
     target_specific_diagnostics,
 };
 
+/// Defines how to resolve destination conflicts while installing one or more skills.
+///
+/// Use this when a target folder already exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum ConflictPolicy {
+    /// Abort installation when any collision is encountered.
     Block,
+    /// Replace existing destination after moving it to a timestamped backup path.
     Replace,
+    /// Keep existing destination and resolve using a suffixed folder name.
     Rename,
 }
 
+/// Destination scope for install operations.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum InstallTarget {
+    /// Install into the global `.agents/skills` scope.
     Global,
     #[allow(dead_code)]
+    /// Compatibility alias retained for older callers; behaves as `Global`.
     User,
+    /// Install into the project-local `.agents/skills` scope.
     Project,
+    /// Install for Claude Code scope.
     ClaudeCode,
+    /// Install for Droid scope.
     Droid,
-    Pencode,
+    /// Install for OpenCode scope.
+    OpenCode,
+    /// Install for Codex scope.
     Codex,
+    /// Install for Zed scope.
     Zed,
+    /// Install into a caller-provided custom root.
     Custom(PathBuf),
 }
 
 impl InstallTarget {
+    /// Maps this target to a corresponding logical skill scope.
     pub fn scope(&self) -> SkillScope {
         match self {
             Self::Global | Self::User => SkillScope::Global,
             Self::Project => SkillScope::Project,
             Self::ClaudeCode => SkillScope::ClaudeCode,
             Self::Droid => SkillScope::Droid,
-            Self::Pencode => SkillScope::Pencode,
+            Self::OpenCode => SkillScope::OpenCode,
             Self::Codex => SkillScope::Codex,
             Self::Zed => SkillScope::Zed,
             Self::Custom(_) => SkillScope::Custom,
         }
     }
 
+    /// Human-readable label used in logs and diagnostics.
     pub fn label(&self) -> &'static str {
         match self {
             Self::Global | Self::User => "Global",
             Self::Project => "Project",
             Self::ClaudeCode => "Claude Code",
             Self::Droid => "Droid",
-            Self::Pencode => "Pencode",
+            Self::OpenCode => "OpenCode",
             Self::Codex => "Codex",
             Self::Zed => "Zed",
             Self::Custom(_) => "Custom",
         }
     }
 
+    /// Returns the configured destination root for this target.
     pub fn destination_root(&self, paths: &ManagerPaths) -> Result<PathBuf> {
         match self {
             Self::Global | Self::User => Ok(paths.global_skills_dir()),
@@ -78,7 +97,7 @@ impl InstallTarget {
                 .ok_or_else(|| SkillsManagerError::UnknownSkillScope(PathBuf::from("project"))),
             Self::ClaudeCode => Ok(paths.claude_code_skills_dir()),
             Self::Droid => Ok(paths.droid_skills_dir()),
-            Self::Pencode => Ok(paths.pencode_skills_dir()),
+            Self::OpenCode => Ok(paths.opencode_skills_dir()),
             Self::Codex => Ok(paths.codex_skills_dir()),
             Self::Zed => Ok(paths.zed_skills_dir()),
             Self::Custom(path) if path.as_os_str().is_empty() => {
@@ -96,7 +115,7 @@ impl From<SkillScope> for InstallTarget {
             SkillScope::Global => Self::Global,
             SkillScope::ClaudeCode => Self::ClaudeCode,
             SkillScope::Droid => Self::Droid,
-            SkillScope::Pencode => Self::Pencode,
+            SkillScope::OpenCode => Self::OpenCode,
             SkillScope::Codex => Self::Codex,
             SkillScope::Zed => Self::Zed,
             SkillScope::Custom => Self::Custom(PathBuf::new()),
@@ -104,39 +123,62 @@ impl From<SkillScope> for InstallTarget {
     }
 }
 
+/// User-submitted install parameters and execution preferences.
 #[derive(Debug, Clone, Serialize)]
 pub struct InstallRequest {
+    /// Source directory to scan for `SKILL.md`.
     pub source_root: PathBuf,
+    /// Optional URL persisted in install metadata.
     pub source_url: Option<String>,
+    /// Target scope selection.
     pub target: InstallTarget,
+    /// Conflict strategy for existing destination paths.
     pub conflict_policy: ConflictPolicy,
+    /// Whether the skill should be enabled after installation.
     pub enable_after_install: bool,
 }
 
+/// Per-skill planning result in an install preview/plan.
 #[derive(Debug, Clone, Serialize)]
 pub struct InstallCandidate {
+    /// Candidate source root.
     pub source_root: PathBuf,
+    /// Planned destination root.
     pub destination_root: PathBuf,
+    /// Parsed metadata from the candidate's `SKILL.md`.
     pub frontmatter: SkillFrontmatter,
+    /// Validation and target-aware diagnostics.
     pub diagnostics: Vec<SkillDiagnostic>,
+    /// Computed health state for the candidate.
     pub health: SkillHealth,
+    /// Number of resource files in the candidate.
     pub resource_count: usize,
+    /// Total bytes across resource files.
     pub resource_bytes: u64,
+    /// Whether destination already exists before planning.
     pub conflict: bool,
 }
 
+/// A preview of an install invocation before applying any changes.
 #[derive(Debug, Clone, Serialize)]
 pub struct InstallPreview {
+    /// Target scope derived from the install target.
     pub scope: SkillScope,
+    /// Common destination root for all candidates.
     pub destination_root: PathBuf,
+    /// Planned candidates.
     pub candidates: Vec<InstallCandidate>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Optional full operation plan for immediate execution.
     pub operation_plan: Option<OperationPlan>,
 }
 
+/// Final result returned by installed skill operations.
 #[derive(Debug, Clone, Serialize)]
 pub struct InstallResult {
+    /// Final installed roots.
     pub installed: Vec<PathBuf>,
+    /// Backup paths created during replacement.
     pub backups: Vec<PathBuf>,
 }
 
@@ -157,16 +199,22 @@ struct ManagedSkillLocation {
     legacy_disabled_skill_file: PathBuf,
 }
 
+/// Primary install service; owns configured paths and exposes preview/apply APIs.
 #[derive(Debug, Clone)]
 pub struct Installer {
+    /// Paths used by install operations.
     paths: ManagerPaths,
 }
 
 impl Installer {
+    /// Create a new installer for the provided manager paths.
     pub fn new(paths: ManagerPaths) -> Self {
         Self { paths }
     }
 
+    /// Build a preview using inferred request values.
+    ///
+    /// This is equivalent to [`Installer::plan`] with a default source URL and enabled state.
     pub fn preview(
         &self,
         source_root: &Path,
@@ -184,6 +232,9 @@ impl Installer {
         Ok(plan.preview())
     }
 
+    /// Create an [`OperationPlan`] from an install request.
+    ///
+    /// The plan includes target discovery, conflict detection, diagnostics, and health state.
     pub fn plan(&self, request: InstallRequest) -> Result<OperationPlan> {
         info!(
             source_root = %request.source_root.display(),
@@ -257,11 +308,17 @@ impl Installer {
         ))
     }
 
+    /// Install immediately from a request.
+    ///
+    /// Equivalent to calling `plan` then `install_plan`.
     pub fn install(&self, request: InstallRequest) -> Result<InstallResult> {
         let plan = self.plan(request)?;
         self.install_plan(plan)
     }
 
+    /// Apply an existing operation plan.
+    ///
+    /// If an error occurs mid-way, recorded filesystem moves are rolled back.
     pub fn install_plan(&self, plan: OperationPlan) -> Result<InstallResult> {
         info!(
             source_root = %plan.request.source_root.display(),
@@ -377,6 +434,9 @@ impl Installer {
         Ok(InstallResult { installed, backups })
     }
 
+    /// Remove an installed skill and return the backup path.
+    ///
+    /// The method moves the skill directory instead of deleting it permanently.
     pub fn remove(&self, skill_root: &Path) -> Result<PathBuf> {
         let location = self.resolve_skill_location(skill_root)?;
         let actual_root = if location.enabled_skill_file.exists() {
@@ -419,11 +479,18 @@ impl Installer {
         Ok(backup)
     }
 
+    /// Toggle a skill's disabled state by path.
+    ///
+    /// `true` disables the skill; `false` enables it.
     pub fn set_disabled(&self, skill_file: &Path, disabled: bool) -> Result<()> {
         let skill_root = skill_root_from_path(skill_file);
         self.set_skill_enabled(&skill_root, !disabled).map(|_| ())
     }
 
+    /// Enable or disable a skill by root path.
+    ///
+    /// For non-Codex scopes this may move the directory between enabled and disabled
+    /// storage roots.
     pub fn set_skill_enabled(&self, skill_root: &Path, enabled: bool) -> Result<PathBuf> {
         let location = self.resolve_skill_location(skill_root)?;
         info!(
@@ -769,6 +836,10 @@ fn unique_claim_name(name: &str, claimed: &mut HashMap<String, ()>) -> String {
     unreachable!("the loop always returns")
 }
 
+/// Resolve the owning scope for a skill file path.
+///
+/// This consults configured global/project/custom roots and returns an error when
+/// the path does not belong to any known scope.
 pub fn scope_for_skill(paths: &ManagerPaths, skill_file: &Path) -> Result<SkillScope> {
     let skill_file = skill_file
         .canonicalize()
@@ -789,6 +860,7 @@ pub fn scope_for_skill(paths: &ManagerPaths, skill_file: &Path) -> Result<SkillS
     Err(SkillsManagerError::UnknownSkillScope(skill_file))
 }
 
+/// Build a stable key for installed skill lookup maps.
 pub fn installed_key(path: &Path) -> String {
     path_key(path)
 }
@@ -1095,9 +1167,9 @@ mod tests {
                 "home/.droid/skills/demo",
             ),
             (
-                InstallTarget::Pencode,
-                SkillScope::Pencode,
-                "home/.pencode/skills/demo",
+                InstallTarget::OpenCode,
+                SkillScope::OpenCode,
+                "home/.config/opencode/skills/demo",
             ),
             (
                 InstallTarget::Codex,
@@ -1154,10 +1226,10 @@ mod tests {
                 "home/.droid/.skills-disabled/demo",
             ),
             (
-                InstallTarget::Pencode,
-                SkillScope::Pencode,
-                "home/.pencode/skills/demo",
-                "home/.pencode/.skills-disabled/demo",
+                InstallTarget::OpenCode,
+                SkillScope::OpenCode,
+                "home/.config/opencode/skills/demo",
+                "home/.config/opencode/.skills-disabled/demo",
             ),
             (
                 InstallTarget::Zed,

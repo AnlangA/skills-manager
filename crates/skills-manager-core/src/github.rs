@@ -2,16 +2,23 @@ use url::Url;
 
 use crate::{Result, SkillsManagerError};
 
+/// Parsed GitHub source location supporting repository URLs and tree paths.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitHubTreeSource {
+    /// Repository owner.
     pub owner: String,
+    /// Repository name (without `.git` suffix).
     pub repo: String,
+    /// Branch/tag/commit to inspect.
     pub reference: String,
+    /// Optional subdirectory path segment under reference.
     pub subdir: Option<String>,
+    /// Normalized original URL string.
     pub original_url: String,
 }
 
 impl GitHubTreeSource {
+    /// Parses input and normalizes to an explicit owner/repo/reference form.
     pub fn parse(input: &str) -> Result<Self> {
         let normalized = normalize_github_input(input);
         let url = Url::parse(&normalized)?;
@@ -57,6 +64,7 @@ impl GitHubTreeSource {
         })
     }
 
+    /// Returns the default archive URL for the selected reference.
     pub fn archive_url(&self) -> String {
         format!(
             "https://github.com/{}/{}/archive/refs/heads/{}.zip",
@@ -64,6 +72,7 @@ impl GitHubTreeSource {
         )
     }
 
+    /// Returns several archive candidates to probe by fallback order.
     pub fn archive_url_candidates(&self) -> Vec<String> {
         vec![
             format!(
@@ -81,10 +90,12 @@ impl GitHubTreeSource {
         ]
     }
 
+    /// Returns an optional subdir path used for tree scoping.
     pub fn path_filter(&self) -> Option<&str> {
         self.subdir.as_deref()
     }
 
+    /// Builds a GitHub tree URL for a given subpath.
     pub fn tree_url_with_path(&self, path: &str) -> String {
         let mut parts = Vec::new();
         if let Some(subdir) = self
@@ -118,6 +129,7 @@ impl GitHubTreeSource {
     }
 }
 
+/// Builds a normalized catalog install URL from source URL and optional path.
 pub fn catalog_git_install_url(url: &str, path: Option<&str>) -> Result<String> {
     let source = GitHubTreeSource::parse(url)?;
     let Some(path) = path.map(str::trim).filter(|path| !path.is_empty()) else {

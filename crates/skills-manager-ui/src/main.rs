@@ -20,11 +20,20 @@ pub fn main() -> iced::Result {
             }
         },
         app::update,
-        app::view,
+        views::view,
     )
     .title("Agent Skills Manager")
     .theme(theme::app_theme())
-    .subscription(app::subscription)
+    .subscription(subscription)
     .font(iced_lucide::FONT_BYTES)
     .run()
+}
+
+fn subscription(app: &app::App) -> iced::Subscription<app::Message> {
+    use std::time::Duration;
+    if app.smoke_test {
+        iced::time::every(Duration::from_millis(250)).map(|_| app::Message::SmokeExit)
+    } else {
+        iced::Subscription::none()
+    }
 }

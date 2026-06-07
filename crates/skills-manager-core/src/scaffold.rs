@@ -10,28 +10,47 @@ use crate::{
     target_specific_diagnostics,
 };
 
+/// Request payload for skill scaffold generation.
 #[derive(Debug, Clone)]
 pub struct SkillScaffoldRequest {
+    /// Skill name.
     pub name: String,
+    /// Skill description.
     pub description: String,
+    /// Target scope for generation.
     pub target: InstallTarget,
+    /// Seed tags.
     pub tags: Vec<String>,
+    /// Seed allowed tools.
     pub allowed_tools: Vec<String>,
+    /// Optional compatibility text.
     pub compatibility: Option<String>,
+    /// Optional license identifier.
     pub license: Option<String>,
+    /// Optional target guidance.
     pub when_to_use: Option<String>,
+    /// Whether to disable model invocation by default.
     pub disable_model_invocation: Option<bool>,
 }
 
+/// Preview + diagnostics result for scaffold generation.
 #[derive(Debug, Clone, Serialize)]
 pub struct SkillScaffoldPreview {
+    /// Destination scope.
     pub scope: crate::SkillScope,
+    /// Folder that would contain `SKILL.md`.
     pub destination_root: PathBuf,
+    /// Expected SKILL.md path.
     pub skill_file: PathBuf,
+    /// Parsed frontmatter that would be written.
     pub frontmatter: SkillFrontmatter,
+    /// Rendered file content.
     pub content: String,
+    /// Generated diagnostics.
     pub diagnostics: Vec<SkillDiagnostic>,
+    /// Computed health.
     pub health: SkillHealth,
+    /// Whether destination already exists.
     pub conflict: bool,
 }
 
@@ -56,6 +75,7 @@ struct ScaffoldFrontmatter<'a> {
     disable_model_invocation: Option<bool>,
 }
 
+/// Builds a preview of scaffold output and validation diagnostics without writing.
 pub fn preview_skill_scaffold(
     paths: &ManagerPaths,
     request: SkillScaffoldRequest,
@@ -118,6 +138,7 @@ pub fn preview_skill_scaffold(
     })
 }
 
+/// Creates scaffold files and persists config entries when not in conflict.
 pub fn create_skill_scaffold(
     paths: &ManagerPaths,
     request: SkillScaffoldRequest,

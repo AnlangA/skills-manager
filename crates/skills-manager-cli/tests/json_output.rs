@@ -483,6 +483,178 @@ fn target_accepts_gloab_alias_for_global() {
     assert!(sandbox.path().join(".agents/skills/demo/SKILL.md").exists());
 }
 
+#[test]
+fn resources_scan_can_filter_plugins_json() {
+    let sandbox = tempdir().unwrap();
+    let source_root = sandbox.path().join("source-plugin");
+    write_codex_plugin(&source_root, "demo-plugin", "1.0.0");
+
+    let install = cli(sandbox.path())
+        .arg("plugins")
+        .arg("install")
+        .arg(&source_root)
+        .arg("--target")
+        .arg("codex")
+        .arg("--marketplace")
+        .arg("local")
+        .output()
+        .unwrap();
+    assert_success(&install);
+
+    let output = cli(sandbox.path())
+        .arg("--output")
+        .arg("json-v3")
+        .arg("resources")
+        .arg("scan")
+        .arg("--kind")
+        .arg("plugin")
+        .output()
+        .unwrap();
+    assert_success(&output);
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["schema_version"], 3);
+    assert_eq!(json["command"], "resources");
+    assert_eq!(json["data"]["type"], "resources");
+    assert_eq!(json["data"]["resources"].as_array().unwrap().len(), 1);
+    assert_eq!(json["data"]["resources"][0]["kind"], "Plugin");
+    assert_eq!(json["data"]["resources"][0]["target"], "Codex");
+    assert_eq!(
+        json["data"]["resources"][0]["metadata"]["plugin_id"],
+        "demo-plugin@local"
+    );
+    assert!(json.get("resources").is_none());
+}
+
+#[test]
+fn plugin_preview_install_and_scan_json_round_trip() {
+    let sandbox = tempdir().unwrap();
+    let source_root = sandbox.path().join("source-plugin");
+    write_codex_plugin(&source_root, "demo-plugin", "1.0.0");
+
+    let preview = cli(sandbox.path())
+        .arg("--output")
+        .arg("json")
+        .arg("plugins")
+        .arg("preview")
+        .arg(&source_root)
+        .arg("--target")
+        .arg("codex")
+        .arg("--marketplace")
+        .arg("local")
+        .output()
+        .unwrap();
+    assert_success(&preview);
+    let json: Value = serde_json::from_slice(&preview.stdout).unwrap();
+    assert_eq!(json["type"], "plugin_preview");
+    assert_eq!(json["preview"]["manifest"]["name"], "demo-plugin");
+    assert_eq!(json["preview"]["operation_plan"]["marketplace"], "local");
+    assert!(
+        json["preview"]["operation_plan"]["destination_root"]
+            .as_str()
+            .unwrap()
+            .ends_with(".codex/plugins/cache/local/demo-plugin/1.0.0")
+    );
+
+    let install = cli(sandbox.path())
+        .arg("--output")
+        .arg("json")
+        .arg("plugins")
+        .arg("install")
+        .arg(&source_root)
+        .arg("--target")
+        .arg("codex")
+        .arg("--marketplace")
+        .arg("local")
+        .output()
+        .unwrap();
+    assert_success(&install);
+    let json: Value = serde_json::from_slice(&install.stdout).unwrap();
+    assert_eq!(json["type"], "plugin_install");
+    assert!(
+        sandbox
+            .path()
+            .join(".codex/plugins/cache/local/demo-plugin/1.0.0/.codex-plugin/plugin.json")
+            .exists()
+    );
+
+    let scan = cli(sandbox.path())
+        .arg("--output")
+        .arg("json")
+        .arg("plugins")
+        .arg("scan")
+        .arg("--target")
+        .arg("codex")
+        .output()
+        .unwrap();
+    assert_success(&scan);
+    let json: Value = serde_json::from_slice(&scan.stdout).unwrap();
+    assert_eq!(json["type"], "plugins");
+    assert_eq!(json["plugins"][0]["display_name"], "Demo Plugin");
+    assert_eq!(json["plugins"][0]["enablement"], "Enabled");
+}
+
+#[test]
+fn marketplace_sources_and_inspect_support_json() {
+    let sandbox = tempdir().unwrap();
+    let marketplace = sandbox.path().join("marketplace.json");
+    write_marketplace(&marketplace);
+
+    let add = cli(sandbox.path())
+        .arg("--output")
+        .arg("json")
+        .arg("marketplaces")
+        .arg("sources")
+        .arg("add")
+        .arg("local-market")
+        .arg(marketplace.to_string_lossy().as_ref())
+        .arg("--target")
+        .arg("codex")
+        .arg("--provider")
+        .arg("file")
+        .output()
+        .unwrap();
+    assert_success(&add);
+    let json: Value = serde_json::from_slice(&add.stdout).unwrap();
+    assert_eq!(json["type"], "marketplace_source");
+    assert_eq!(json["source"]["label"], "local-market");
+    assert_eq!(json["source"]["target"], "codex");
+
+    let list = cli(sandbox.path())
+        .arg("--output")
+        .arg("json")
+        .arg("marketplaces")
+        .arg("sources")
+        .arg("list")
+        .output()
+        .unwrap();
+    assert_success(&list);
+    let json: Value = serde_json::from_slice(&list.stdout).unwrap();
+    assert_eq!(json["type"], "marketplace_sources");
+    assert_eq!(json["sources"][0]["label"], "local-market");
+
+    let inspect = cli(sandbox.path())
+        .arg("--output")
+        .arg("json-v3")
+        .arg("marketplaces")
+        .arg("inspect")
+        .arg(marketplace.to_string_lossy().as_ref())
+        .arg("--target")
+        .arg("codex")
+        .output()
+        .unwrap();
+    assert_success(&inspect);
+    let json: Value = serde_json::from_slice(&inspect.stdout).unwrap();
+    assert_eq!(json["schema_version"], 3);
+    assert_eq!(json["data"]["type"], "marketplace_inspect");
+    assert_eq!(json["data"]["marketplace"]["name"], "demo-market");
+    assert_eq!(json["data"]["marketplace"]["target"], "Codex");
+    assert_eq!(
+        json["data"]["marketplace"]["entries"][0]["source"]["source"],
+        "git"
+    );
+    assert!(json.get("marketplace").is_none());
+}
+
 fn cli(home: &std::path::Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_skills-manager"));
     command.env("HOME", home).env("RUST_LOG", "off");
@@ -518,4 +690,62 @@ fn write_source_skill(root: &std::path::Path, folder: &str, content: &str) {
     let skill_dir = root.join(folder);
     fs::create_dir_all(&skill_dir).unwrap();
     fs::write(skill_dir.join("SKILL.md"), content).unwrap();
+}
+
+fn write_codex_plugin(root: &std::path::Path, name: &str, version: &str) {
+    fs::create_dir_all(root.join(".codex-plugin")).unwrap();
+    fs::create_dir_all(root.join("skills/demo")).unwrap();
+    fs::write(
+        root.join(".codex-plugin/plugin.json"),
+        format!(
+            r#"{{
+  "name": "{name}",
+  "version": "{version}",
+  "description": "Demo plugin for CLI tests",
+  "skills": "./skills/",
+  "interface": {{
+    "displayName": "Demo Plugin",
+    "shortDescription": "Demo plugin for CLI tests",
+    "category": "testing"
+  }}
+}}"#
+        ),
+    )
+    .unwrap();
+    fs::write(
+        root.join("skills/demo/SKILL.md"),
+        "---\nname: demo\ndescription: Demo bundled skill\n---\n",
+    )
+    .unwrap();
+}
+
+fn write_marketplace(path: &std::path::Path) {
+    fs::write(
+        path,
+        r#"{
+  "name": "demo-market",
+  "interface": {
+    "displayName": "Demo Market"
+  },
+  "plugins": [
+    {
+      "name": "demo-plugin",
+      "description": "Demo plugin listing",
+      "version": "1.0.0",
+      "category": "testing",
+      "source": {
+        "source": "git",
+        "url": "https://github.com/acme/demo-plugin",
+        "path": "plugins/demo",
+        "ref": "main"
+      },
+      "policy": {
+        "installation": "preview required",
+        "authentication": "none"
+      }
+    }
+  ]
+}"#,
+    )
+    .unwrap();
 }

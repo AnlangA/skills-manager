@@ -20,90 +20,141 @@ use crate::{
 
 const ZED_CATALOG_BUDGET_BYTES: u64 = 50 * 1024;
 
+/// Strategy used to represent enabled/disabled state transitions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum EnablementStrategy {
+    /// Keep a skill present and mark it enabled/disabled in config.
     ConfigToggle,
+    /// Enable/disable by moving a directory into a disabled store.
     DirectoryMove,
 }
 
+/// Policy describing how nested folders are expected in skill roots.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum LayoutPolicy {
+    /// Nested structures are allowed.
     NestedAllowed,
+    /// Flat top-level structure is required.
     FlatTopLevel,
 }
 
+/// Static metadata for a scope plus diagnostics context for status/doctor output.
 #[derive(Debug, Clone, Serialize)]
 pub struct TargetProfile {
+    /// Scope for this profile.
     pub scope: SkillScope,
+    /// Display label.
     pub label: String,
+    /// Root folder containing active skill installations.
     pub skills_root: Option<PathBuf>,
+    /// Optional disabled store folder.
     pub disabled_store_root: Option<PathBuf>,
+    /// Optional legacy disabled store folder.
     pub legacy_disabled_store_root: Option<PathBuf>,
+    /// Whether this target uses config-based or directory-move toggling.
     pub enablement_strategy: EnablementStrategy,
+    /// Whether nesting is allowed in this target.
     pub layout_policy: LayoutPolicy,
+    /// Lower value means earlier in precedence order.
     pub precedence: usize,
+    /// Optional catalog budget check for targets that precompute catalogs.
     pub catalog_budget_bytes: Option<u64>,
+    /// Frontmatter keys recognized by the target.
     pub supported_frontmatter: Vec<String>,
+    /// Human-targeted notes for diagnostics and docs.
     pub notes: Vec<String>,
 }
 
+/// Per-target count buckets used in health summaries.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct TargetHealthCounts {
+    /// Total skills in scope.
     pub total: usize,
+    /// Enabled skills.
     pub enabled: usize,
+    /// Disabled skills.
     pub disabled: usize,
+    /// Skills considered usable.
     pub usable: usize,
+    /// Invalid skills.
     pub invalid: usize,
+    /// Warning-only skills.
     pub warning: usize,
+    /// Shadowed duplicates.
     pub shadowed: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DoctorRepairAction {
+    /// Short label in reports.
     pub label: String,
+    /// Human-readable description and expected outcome.
     pub description: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TargetDoctorReport {
+    /// Target profile.
     pub profile: TargetProfile,
+    /// Aggregate counts for this target.
     pub counts: TargetHealthCounts,
+    /// Optional catalog bytes estimate for targets with catalogs.
     pub catalog_bytes: Option<u64>,
+    /// Diagnostics discovered for this target.
     pub diagnostics: Vec<SkillDiagnostic>,
+    /// Fixes that can be applied for the target.
     pub repair_actions: Vec<DoctorRepairAction>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct DoctorSummary {
+    /// Number of inspected targets.
     pub targets: usize,
+    /// Total skills across all targets.
     pub skills: usize,
+    /// Enabled skill count.
     pub enabled: usize,
+    /// Disabled skill count.
     pub disabled: usize,
+    /// Invalid skills count.
     pub invalid: usize,
+    /// Warning count.
     pub warnings: usize,
+    /// Total proposed repair actions.
     pub repair_actions: usize,
 }
 
+/// High-level doctor output emitted by status checks.
 #[derive(Debug, Clone, Serialize)]
 pub struct DoctorReport {
+    /// Aggregate summary.
     pub summary: DoctorSummary,
+    /// Per-target detail.
     pub targets: Vec<TargetDoctorReport>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RepairOutcome {
+    /// Repair action label.
     pub label: String,
+    /// Path impacted by the action, if applicable.
     pub path: Option<PathBuf>,
+    /// Whether action was applied.
     pub applied: bool,
+    /// Status message after execution or simulation.
     pub message: String,
 }
 
+/// Result for a full repair run.
 #[derive(Debug, Clone, Serialize)]
 pub struct RepairReport {
+    /// Whether this was a dry-run.
     pub dry_run: bool,
+    /// All repair attempts and their status.
     pub actions: Vec<RepairOutcome>,
 }
 
+/// Returns all installed target profiles from config and known defaults.
 pub fn target_profiles(paths: &ManagerPaths) -> Result<Vec<TargetProfile>> {
     let config = ManagerConfig::load(paths)?;
     let mut profiles = Vec::new();
@@ -150,10 +201,10 @@ pub fn target_profiles(paths: &ManagerPaths) -> Result<Vec<TargetProfile>> {
         "Droid currently follows directory-scanned skill semantics.",
     ));
     profiles.push(directory_profile(
-        SkillScope::Pencode,
-        paths.pencode_skills_dir(),
+        SkillScope::OpenCode,
+        paths.opencode_skills_dir(),
         4,
-        "Pencode currently follows directory-scanned skill semantics.",
+        "OpenCode currently follows directory-scanned skill semantics.",
     ));
     profiles.push(TargetProfile {
         scope: SkillScope::Codex,
@@ -200,12 +251,14 @@ pub fn target_profiles(paths: &ManagerPaths) -> Result<Vec<TargetProfile>> {
     Ok(profiles)
 }
 
+/// Builds a complete doctor report for all targets in the given workspace.
 pub fn doctor_report(paths: &ManagerPaths) -> Result<DoctorReport> {
     let profiles = target_profiles(paths)?;
     let skills = scan_installed_skills(paths)?;
     doctor_report_for_skills(paths, profiles, &skills)
 }
 
+/// Builds a doctor report from supplied targets and skills.
 pub fn doctor_report_for_skills(
     paths: &ManagerPaths,
     profiles: Vec<TargetProfile>,
@@ -279,6 +332,9 @@ pub fn doctor_report_for_skills(
     Ok(DoctorReport { summary, targets })
 }
 
+/// Runs repair probes and optionally applies migrations.
+///
+/// This currently addresses legacy disabled-store cleanup and stale Codex toggles.
 pub fn repair_targets(paths: &ManagerPaths, dry_run: bool) -> Result<RepairReport> {
     let profiles = target_profiles(paths)?;
     let mut actions = Vec::new();
@@ -294,6 +350,7 @@ pub fn repair_targets(paths: &ManagerPaths, dry_run: bool) -> Result<RepairRepor
     Ok(RepairReport { dry_run, actions })
 }
 
+/// Computes target-aware diagnostics from frontmatter and target constraints.
 pub fn target_specific_diagnostics(
     scope: SkillScope,
     root_dir: &Path,
@@ -370,7 +427,7 @@ pub fn target_specific_diagnostics(
         SkillScope::Project
         | SkillScope::Global
         | SkillScope::Droid
-        | SkillScope::Pencode
+        | SkillScope::OpenCode
         | SkillScope::Custom => {}
     }
 

@@ -24,27 +24,42 @@ const MAX_ARCHIVE_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES: usize = 10_000;
 const MAX_ARCHIVE_UNCOMPRESSED_BYTES: u64 = 256 * 1024 * 1024;
 
+/// Download result for temporary unpacked skills downloads.
 #[derive(Debug)]
 pub struct DownloadedSkills {
+    /// Temporary working directory.
     pub temp_dir: TempDir,
+    /// Parsed archive source.
     pub source: GitHubTreeSource,
+    /// Candidate search root used for scans.
     pub search_root: PathBuf,
+    /// Discovered candidates in the archive.
     pub candidates: Vec<SkillCandidate>,
 }
 
+/// Cached download metadata persisted in config.
 #[derive(Debug, Clone, Serialize)]
 pub struct DownloadedSkillEntry {
+    /// Stable cache identifier.
     pub id: String,
+    /// Source URL.
     pub source_url: String,
+    /// Bundle root path on disk.
     pub root_dir: PathBuf,
+    /// Search root that was scanned.
     pub search_root: PathBuf,
+    /// Optional download timestamp.
     pub downloaded_at: Option<DateTime<Utc>>,
+    /// Number of candidates.
     pub candidate_count: usize,
+    /// Number of resources in candidates.
     pub resource_count: usize,
+    /// Total resource bytes.
     pub resource_bytes: u64,
 }
 
 impl DownloadedSkillEntry {
+    /// Returns a compact summary string used in status output.
     pub fn resource_summary(&self) -> String {
         format!(
             "{} candidate(s), {} file(s), {}",
@@ -57,18 +72,26 @@ impl DownloadedSkillEntry {
 
 #[derive(Debug)]
 pub struct DownloadedMarketplace {
+    /// Optional temporary directory (when downloaded as archive).
     pub temp_dir: Option<TempDir>,
+    /// Source descriptor.
     pub source: GitHubTreeSource,
+    /// Parsed catalog payload.
     pub marketplace: SkillCatalog,
 }
 
+/// Downloaded catalog payload with optional temp directory.
 #[derive(Debug)]
 pub struct DownloadedCatalog {
+    /// Optional temporary directory (present if archive was downloaded).
     pub temp_dir: Option<TempDir>,
+    /// Source descriptor.
     pub source: GitHubTreeSource,
+    /// Parsed catalog payload.
     pub catalog: SkillCatalog,
 }
 
+/// Downloads a GitHub URL to a temporary directory and discovers skill candidates.
 pub async fn download_github_skills(url: &str) -> Result<DownloadedSkills> {
     info!(%url, "downloading GitHub skills to temporary directory");
     let source = GitHubTreeSource::parse(url)?;
@@ -93,6 +116,7 @@ pub async fn download_github_skills(url: &str) -> Result<DownloadedSkills> {
     })
 }
 
+/// Downloads and caches a GitHub catalog under configured cache location.
 pub async fn download_github_skills_to_cache(
     paths: &ManagerPaths,
     url: &str,
@@ -104,6 +128,7 @@ pub async fn download_github_skills_to_cache(
     cache_github_skills_archive(paths, url, &bytes, download_dir)
 }
 
+/// Persists a downloaded archive into cache and records metadata.
 pub fn cache_github_skills_archive(
     paths: &ManagerPaths,
     url: &str,
@@ -161,6 +186,7 @@ pub fn cache_github_skills_archive(
     Ok(entry)
 }
 
+/// Lists all cached downloads discoverable from config.
 pub fn list_downloaded_skills(paths: &ManagerPaths) -> Result<Vec<DownloadedSkillEntry>> {
     debug!("listing downloaded skills");
     let config = ManagerConfig::load(paths)?;
@@ -217,6 +243,7 @@ pub fn list_downloaded_skills(paths: &ManagerPaths) -> Result<Vec<DownloadedSkil
     Ok(entries)
 }
 
+/// Gets a single download entry by root dir or ID.
 pub fn downloaded_skill_entry(
     paths: &ManagerPaths,
     root_dir: &Path,
@@ -228,6 +255,7 @@ pub fn downloaded_skill_entry(
         .ok_or_else(|| SkillsManagerError::UnknownDownload(root_dir.to_path_buf()))
 }
 
+/// Removes cached download directory and clears config metadata.
 pub fn remove_downloaded_skills(paths: &ManagerPaths, root_dir: &Path) -> Result<PathBuf> {
     info!(root_dir = %root_dir.display(), "removing downloaded skills cache");
     let requested = root_dir.canonicalize()?;
@@ -252,6 +280,7 @@ pub fn remove_downloaded_skills(paths: &ManagerPaths, root_dir: &Path) -> Result
     Ok(matched)
 }
 
+/// Downloads marketplace catalog and returns an in-memory catalog representation.
 pub async fn download_github_marketplace(url: &str) -> Result<DownloadedMarketplace> {
     let downloaded = download_github_catalog(url).await?;
     Ok(DownloadedMarketplace {
@@ -261,6 +290,7 @@ pub async fn download_github_marketplace(url: &str) -> Result<DownloadedMarketpl
     })
 }
 
+/// Downloads and parses catalog metadata from GitHub input.
 pub async fn download_github_catalog(url: &str) -> Result<DownloadedCatalog> {
     info!(%url, "downloading GitHub catalog");
     let source = GitHubTreeSource::parse(url)?;
@@ -310,7 +340,7 @@ pub async fn download_github_catalog(url: &str) -> Result<DownloadedCatalog> {
     Err(SkillsManagerError::NoSkillsFound)
 }
 
-async fn download_first_archive(source: &GitHubTreeSource) -> Result<Vec<u8>> {
+pub(crate) async fn download_first_archive(source: &GitHubTreeSource) -> Result<Vec<u8>> {
     let client = github_client()?;
     let mut last_error = None;
 
@@ -409,7 +439,10 @@ pub fn extract_zip_safe(bytes: &[u8], destination: &Path) -> Result<()> {
     Ok(())
 }
 
-fn filtered_search_root(extract_dir: &Path, path_filter: Option<&str>) -> Result<PathBuf> {
+pub(crate) fn filtered_search_root(
+    extract_dir: &Path,
+    path_filter: Option<&str>,
+) -> Result<PathBuf> {
     let Some(path_filter) = path_filter else {
         return Ok(extract_dir.to_path_buf());
     };

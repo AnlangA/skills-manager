@@ -5,11 +5,13 @@ use std::{
 
 use iced::Task;
 use skills_manager_core::{
-    CatalogFormat, ConflictPolicy, DownloadedSkillEntry, InstallRequest, InstallTarget, Installer,
-    ManagerConfig, ManagerPaths, OperationPlan, ProjectRoot, SkillScaffoldRequest,
-    WorkspaceSnapshot, create_skill_scaffold, download_github_catalog, download_github_skills,
+    AgentToolTarget, CatalogFormat, ConflictPolicy, DownloadedSkillEntry, InstallRequest,
+    InstallTarget, Installer, ManagerConfig, ManagerPaths, MarketplaceSearchProvider,
+    OperationPlan, ProjectRoot, ResourceManager, SkillScaffoldRequest, WorkspaceSnapshot,
+    add_marketplace_source, create_skill_scaffold, download_github_catalog, download_github_skills,
     download_github_skills_to_cache, downloaded_skill_entry, export_installed_catalog,
-    preview_skill_scaffold, remove_downloaded_skills, scan_installed_skills,
+    preview_skill_scaffold, refresh_marketplace_source, remove_downloaded_skills,
+    remove_marketplace_source, scan_installed_skills, search_marketplace,
 };
 
 use crate::app::{
@@ -106,7 +108,6 @@ pub fn preview_task(
                             download_dir,
                             target,
                             enable_after_install,
-                            download_root: None,
                             conflict_policy,
                         },
                         preview,
@@ -132,7 +133,6 @@ pub fn preview_task(
                             download_dir,
                             target,
                             enable_after_install,
-                            download_root: None,
                             conflict_policy,
                         },
                         preview,
@@ -159,7 +159,6 @@ pub fn preview_task(
                             download_dir,
                             target,
                             enable_after_install,
-                            download_root: Some(downloaded.root_dir),
                             conflict_policy,
                         },
                         preview,
@@ -338,6 +337,101 @@ pub fn remove_task(project_path: String, skill_root: PathBuf) -> Task<Message> {
     )
 }
 
+pub fn toggle_plugin_task(
+    project_path: String,
+    plugin_id: String,
+    target: AgentToolTarget,
+    enabled: bool,
+) -> Task<Message> {
+    Task::perform(
+        async move {
+            let paths = paths_from_project(&project_path)?;
+            let manager = ResourceManager::new(paths);
+            manager
+                .set_plugin_enabled(target, &plugin_id, enabled)
+                .map_err(|error| error.to_string())?;
+            Ok(if enabled {
+                "Enabled plugin.".to_string()
+            } else {
+                "Disabled plugin.".to_string()
+            })
+        },
+        Message::PluginToggled,
+    )
+}
+
+pub fn remove_plugin_task(
+    project_path: String,
+    plugin_id: String,
+    target: AgentToolTarget,
+) -> Task<Message> {
+    Task::perform(
+        async move {
+            let paths = paths_from_project(&project_path)?;
+            let manager = ResourceManager::new(paths);
+            let backup = manager
+                .remove_plugin(target, &plugin_id)
+                .map_err(|error| error.to_string())?;
+            Ok(format!("Removed plugin. Backup: {}", backup.display()))
+        },
+        Message::PluginRemoved,
+    )
+}
+
+pub fn add_marketplace_source_task(
+    project_path: String,
+    label: String,
+    source: String,
+    target: AgentToolTarget,
+    provider: Option<String>,
+) -> Task<Message> {
+    Task::perform(
+        async move {
+            let paths = paths_from_project(&project_path)?;
+            add_marketplace_source(&paths, &label, &source, Some(target), provider)
+                .map_err(|error| error.to_string())
+        },
+        Message::MarketplaceSourceAdded,
+    )
+}
+
+pub fn refresh_marketplace_source_task(project_path: String, label: String) -> Task<Message> {
+    Task::perform(
+        async move {
+            let paths = paths_from_project(&project_path)?;
+            refresh_marketplace_source(&paths, &label)
+                .await
+                .map_err(|error| error.to_string())
+        },
+        Message::MarketplaceInspected,
+    )
+}
+
+pub fn remove_marketplace_source_task(project_path: String, label: String) -> Task<Message> {
+    Task::perform(
+        async move {
+            let paths = paths_from_project(&project_path)?;
+            remove_marketplace_source(&paths, &label).map_err(|error| error.to_string())
+        },
+        Message::MarketplaceSourceRemoved,
+    )
+}
+
+pub fn search_marketplace_task(
+    provider: MarketplaceSearchProvider,
+    query: String,
+) -> Task<Message> {
+    Task::perform(
+        async move {
+            search_marketplace(provider, &query)
+                .await
+                .map(|result| result.entries)
+                .map_err(|error| error.to_string())
+        },
+        Message::MarketplaceSearchLoaded,
+    )
+}
+
 pub fn preview_scaffold_task(project_path: String, request: SkillScaffoldRequest) -> Task<Message> {
     Task::perform(
         async move {
@@ -365,7 +459,6 @@ struct PreviewContext {
     download_dir: Option<String>,
     target: InstallTarget,
     enable_after_install: bool,
-    download_root: Option<PathBuf>,
     conflict_policy: ConflictPolicy,
 }
 
@@ -380,9 +473,7 @@ fn preview_state(
         download_dir: context.download_dir,
         target: context.target,
         enable_after_install: context.enable_after_install,
-        download_root: context.download_root,
         scope: preview.scope,
-        destination_root: preview.destination_root,
         conflict_policy: context.conflict_policy,
         operation_plan: preview.operation_plan,
         candidates: preview
