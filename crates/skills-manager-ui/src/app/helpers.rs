@@ -1,6 +1,12 @@
+//! Helper functions for install target resolution, scaffold requests, and search.
+//!
+//! Contains pure functions that derive install targets from UI state,
+//! build scaffold requests from form fields, compute search haystacks,
+//! and convert catalog sources into preview-ready entry states.
+
 use skills_manager_core::{
-    InstallTarget, InstalledSkill, SkillCatalogSource, SkillScaffoldRequest, SkillScope,
-    catalog_git_install_url, installed_skill_identity,
+    InstallTarget, InstalledSkill, ManagedResource, SkillCatalogSource, SkillScaffoldRequest,
+    SkillScope, catalog_git_install_url, installed_skill_identity,
 };
 
 use super::state::{CatalogEntryState, CreateState, InstallState};
@@ -116,6 +122,37 @@ pub fn skill_search_haystack(skill: &InstalledSkill) -> String {
     haystack.push_str(&skill.frontmatter.allowed_tools.join(" "));
     haystack.push(' ');
     haystack.push_str(&skill.frontmatter.tags.join(" "));
+    haystack.to_lowercase()
+}
+
+pub fn resource_search_haystack(resource: &ManagedResource) -> String {
+    let mut haystack = String::new();
+    haystack.push_str(resource.kind.label());
+    haystack.push(' ');
+    haystack.push_str(resource.target.label());
+    haystack.push(' ');
+    haystack.push_str(&resource.display_name);
+    haystack.push(' ');
+    haystack.push_str(resource.description.as_deref().unwrap_or_default());
+    haystack.push(' ');
+    haystack.push_str(resource.source_url.as_deref().unwrap_or_default());
+    haystack.push(' ');
+    haystack.push_str(&resource.root_dir.display().to_string());
+    haystack.push(' ');
+    haystack.push_str(
+        &resource
+            .manifest_file
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_default(),
+    );
+    haystack.push(' ');
+    for (key, value) in &resource.metadata {
+        haystack.push_str(key);
+        haystack.push(' ');
+        haystack.push_str(value);
+        haystack.push(' ');
+    }
     haystack.to_lowercase()
 }
 

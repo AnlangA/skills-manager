@@ -1,15 +1,29 @@
+//! Shared UI type definitions for views, scopes, and policies.
+//!
+//! Provides display-friendly enums for active views, install sources,
+//! scope selectors, conflict policies, catalog formats, and tab selectors
+//! used across the desktop UI.
+
 use std::{fmt, path::PathBuf};
 
 use skills_manager_core::{CatalogFormat, ConflictPolicy, InstallTarget};
 
+/// Active screen selection in the sidebar navigation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActiveView {
+    /// Skills library view.
     Library,
+    /// Plugin management view.
     Plugins,
+    /// Install workflow view.
     Install,
+    /// Skill scaffold creation view.
     Create,
+    /// Marketplace source management view.
     Marketplace,
+    /// Catalog export view.
     Catalog,
+    /// Targets and settings view.
     Targets,
 }
 
@@ -27,11 +41,16 @@ impl ActiveView {
     }
 }
 
+/// Source type for skill installation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstallSource {
+    /// Install from a GitHub repository URL.
     Url,
+    /// Install from a local filesystem path.
     Local,
+    /// Install from a previously downloaded cache bundle.
     Downloaded,
+    /// Install from a loaded catalog entry.
     Catalog,
 }
 
@@ -50,15 +69,24 @@ impl fmt::Display for InstallSource {
     }
 }
 
+/// UI-friendly scope selector mapping to install targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiScope {
+    /// Global user scope.
     Global,
+    /// Project-local scope.
     Project,
+    /// Claude Code scope.
     ClaudeCode,
+    /// Droid scope.
     Droid,
+    /// OpenCode scope.
     OpenCode,
+    /// Codex scope.
     Codex,
+    /// Zed scope.
     Zed,
+    /// User-defined custom root.
     Custom,
 }
 
@@ -90,10 +118,14 @@ impl fmt::Display for UiScope {
     }
 }
 
+/// UI conflict resolution policy selector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiConflictPolicy {
+    /// Abort when destination exists.
     Block,
+    /// Rename the new skill folder.
     Rename,
+    /// Replace existing with a backup.
     Replace,
 }
 
@@ -121,10 +153,14 @@ impl fmt::Display for UiConflictPolicy {
     }
 }
 
+/// UI catalog export format selector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiCatalogFormat {
+    /// Pretty JSON.
     Json,
+    /// XML string.
     Xml,
+    /// Markdown table.
     Markdown,
 }
 
@@ -152,55 +188,7 @@ impl fmt::Display for UiCatalogFormat {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PluginViewTab {
-    All,
-    Codex,
-    ClaudeCode,
-    Generic,
-}
-
-impl PluginViewTab {
-    pub const ALL: [Self; 4] = [Self::All, Self::Codex, Self::ClaudeCode, Self::Generic];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::All => "All",
-            Self::Codex => "Codex",
-            Self::ClaudeCode => "Claude Code",
-            Self::Generic => "Generic",
-        }
-    }
-
-    pub fn matches_target(self, target: skills_manager_core::AgentToolTarget) -> bool {
-        match self {
-            Self::All => true,
-            Self::Codex => target == skills_manager_core::AgentToolTarget::Codex,
-            Self::ClaudeCode => target == skills_manager_core::AgentToolTarget::ClaudeCode,
-            Self::Generic => target == skills_manager_core::AgentToolTarget::Generic,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MarketplaceViewTab {
-    Sources,
-    Search,
-    Inspected,
-}
-
-impl MarketplaceViewTab {
-    pub const ALL: [Self; 3] = [Self::Sources, Self::Search, Self::Inspected];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Sources => "Sources",
-            Self::Search => "Search",
-            Self::Inspected => "Inspected",
-        }
-    }
-}
-
+/// Resolves a UI scope and optional custom path into an [`InstallTarget`].
 pub fn resolve_install_target(scope: UiScope, custom_path: &str) -> Result<InstallTarget, String> {
     match scope {
         UiScope::Global => Ok(InstallTarget::Global),

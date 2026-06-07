@@ -1,49 +1,32 @@
+//! Inventory filter and sort enums for skill and resource lists.
+//!
+//! Provides scope, health, source, resource kind, plugin target, and
+//! sort key selectors used by the inventory, plugin, and marketplace views.
+
 use std::fmt;
 
-use skills_manager_core::{AgentToolTarget, InstalledSkill, ResourceKind, SkillHealth, SkillScope};
+use skills_manager_core::{AgentToolTarget, InstalledSkill, SkillHealth, SkillScope};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResourceKindFilter {
-    Skills,
-    Plugins,
-    Marketplaces,
-    All,
-}
-
-impl ResourceKindFilter {
-    pub const ALL: [Self; 4] = [Self::Skills, Self::Plugins, Self::Marketplaces, Self::All];
-
-    pub fn matches(self, kind: ResourceKind) -> bool {
-        match self {
-            Self::Skills => kind == ResourceKind::Skill,
-            Self::Plugins => kind == ResourceKind::Plugin,
-            Self::Marketplaces => kind == ResourceKind::Marketplace,
-            Self::All => true,
-        }
-    }
-}
-
-impl fmt::Display for ResourceKindFilter {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Skills => "Skills",
-            Self::Plugins => "Plugins",
-            Self::Marketplaces => "Marketplaces",
-            Self::All => "All resources",
-        })
-    }
-}
-
+/// Scope filter for the inventory list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScopeFilter {
+    /// Show all scopes.
     All,
+    /// Show only project-scoped skills.
     Project,
+    /// Show only global-scoped skills.
     Global,
+    /// Show only Claude Code skills.
     ClaudeCode,
+    /// Show only Droid skills.
     Droid,
+    /// Show only OpenCode skills.
     OpenCode,
+    /// Show only Codex skills.
     Codex,
+    /// Show only Zed skills.
     Zed,
+    /// Show only custom-root skills.
     Custom,
 }
 
@@ -91,13 +74,20 @@ impl fmt::Display for ScopeFilter {
     }
 }
 
+/// Health state filter for the inventory list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HealthFilter {
+    /// Show all health states.
     All,
+    /// Show skills that need attention (warning, invalid, or shadowed).
     NeedsAttention,
+    /// Show only valid skills.
     Valid,
+    /// Show only warning skills.
     Warning,
+    /// Show only invalid skills.
     Invalid,
+    /// Show only shadowed skills.
     Shadowed,
 }
 
@@ -139,10 +129,14 @@ impl fmt::Display for HealthFilter {
     }
 }
 
+/// Source provenance filter for the inventory list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceFilter {
+    /// Show all source types.
     All,
+    /// Show only skills with a known source URL.
     Managed,
+    /// Show only skills without a tracked source.
     Unknown,
 }
 
@@ -168,11 +162,16 @@ impl fmt::Display for SourceFilter {
     }
 }
 
+/// Agent tool target filter for the plugins list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PluginTargetFilter {
+    /// Show all targets.
     All,
+    /// Show only Codex plugins.
     Codex,
+    /// Show only Claude Code plugins.
     ClaudeCode,
+    /// Show only generic plugins.
     Generic,
 }
 
@@ -200,11 +199,16 @@ impl fmt::Display for PluginTargetFilter {
     }
 }
 
+/// Sort key for the inventory list ordering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortKey {
+    /// Sort by health priority (invalid first, then warning, then valid).
     Priority,
+    /// Sort alphabetically by name.
     Name,
+    /// Sort by health status.
     Health,
+    /// Sort by resource count.
     Resources,
 }
 

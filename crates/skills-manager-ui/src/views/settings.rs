@@ -1,3 +1,9 @@
+//! Targets and settings view showing path configuration, health metrics, and doctor report.
+//!
+//! Renders the project and download path settings, target health overview
+//! metrics, and a detailed doctor report with per-target diagnostics and
+//! repair action suggestions.
+
 use iced::{
     Alignment, Element, Length,
     widget::{column, row, scrollable, text},

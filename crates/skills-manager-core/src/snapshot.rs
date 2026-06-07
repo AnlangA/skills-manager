@@ -1,3 +1,10 @@
+//! Workspace snapshot aggregation for CLI status and desktop dashboard.
+//!
+//! Provides [`WorkspaceSnapshot`], a single load call that collects
+//! installed skills, managed resources, downloads, marketplace sources,
+//! target profiles, and a doctor report into a serializable view.
+//! Also builds a [`SkillIndex`] for fast filtering and search.
+
 use std::collections::BTreeMap;
 
 use serde::Serialize;

@@ -1,3 +1,10 @@
+//! Skill discovery, frontmatter parsing, validation, and indexing.
+//!
+//! This module provides the core skill lifecycle helpers: scanning
+//! filesystem roots for `SKILL.md` candidates, parsing YAML frontmatter,
+//! validating required fields and resource budgets, computing health
+//! states, and resolving identity-based shadowing across scopes.
+
 use std::{
     collections::{BTreeMap, HashMap},
     fs,

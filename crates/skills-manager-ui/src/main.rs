@@ -1,3 +1,8 @@
+//! `skills-manager-ui` desktop application entrypoint.
+//!
+//! Launches an `iced`-based desktop UI for managing Agent Skills.
+//! Supports a `--smoke-test` flag for headless CI verification.
+
 mod app;
 mod components;
 mod icons;

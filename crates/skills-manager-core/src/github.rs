@@ -1,3 +1,9 @@
+//! GitHub URL parsing and archive URL construction.
+//!
+//! Provides [`GitHubTreeSource`] for normalizing GitHub repository URLs,
+//! tree paths, and shorthand `owner/repo` references into a structured
+//! form suitable for archive downloads and catalog lookups.
+
 use url::Url;
 
 use crate::{Result, SkillsManagerError};

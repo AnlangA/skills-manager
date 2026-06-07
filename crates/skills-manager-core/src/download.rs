@@ -1,3 +1,10 @@
+//! Download, cache, and catalog helpers for remote GitHub skill sources.
+//!
+//! Handles fetching GitHub archive ZIPs, extracting them safely with
+//! path-traversal protection, discovering skill candidates in unpacked
+//! bundles, and managing a persistent download cache backed by
+//! [`ManagerConfig`].
+
 use std::{
     fs,
     io::Cursor,
@@ -70,6 +77,7 @@ impl DownloadedSkillEntry {
     }
 }
 
+/// Downloaded marketplace catalog payload with optional temp directory.
 #[derive(Debug)]
 pub struct DownloadedMarketplace {
     /// Optional temporary directory (when downloaded as archive).
@@ -390,6 +398,10 @@ fn github_client() -> Result<reqwest::Client> {
     Ok(client)
 }
 
+/// Extracts a ZIP archive to `destination` with path-traversal and size protections.
+///
+/// Returns an error if any entry attempts to escape the extraction root,
+/// exceeds per-entry or total size limits, or if the archive has too many entries.
 pub fn extract_zip_safe(bytes: &[u8], destination: &Path) -> Result<()> {
     let reader = Cursor::new(bytes);
     let mut archive = ZipArchive::new(reader)?;

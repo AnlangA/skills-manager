@@ -1,14 +1,20 @@
+//! Plugin management view with target-grouped list and inspector panel.
+//!
+//! Renders installed plugins grouped by agent target (Codex, Claude Code,
+//! Generic), with filter and sort controls, enable/disable toggles,
+//! removal actions, and a detail inspector showing manifest metadata.
+
 use iced::{
     Alignment, Element, Length,
     widget::{button, checkbox, column, container, row, scrollable, text, text_input},
 };
 use skills_manager_core::{
-    AgentToolTarget, ManagedResource, ResourceHealth, ResourceKind, SkillHealth, SkillScope,
+    AgentToolTarget, ManagedResource, ResourceHealth, SkillHealth, SkillScope,
 };
 
 use crate::theme::*;
 use crate::{
-    app::{App, HealthFilter, Message, PluginTargetFilter, SortKey},
+    app::{App, HealthFilter, Message, PluginTargetFilter, SortKey, filtered_plugin_indices},
     components, icons, theme,
 };
 
@@ -55,8 +61,8 @@ pub fn view(app: &App) -> Element<'_, Message> {
 
 fn filter_bar(app: &App) -> Element<'_, Message> {
     row![
-        text_input("Filter plugins...", &app.inventory.search_query)
-            .on_input(Message::SearchChanged)
+        text_input("Filter plugins...", &app.inventory.plugin_search_query)
+            .on_input(Message::PluginSearchChanged)
             .padding([SPACING_SM, SPACING_MD])
             .style(theme::input)
             .width(Length::FillPortion(2)),
@@ -114,35 +120,17 @@ fn sort_header<'a>(
 }
 
 fn filtered_plugins(app: &App) -> Vec<&ManagedResource> {
-    let query = app.inventory.search_query.trim().to_lowercase();
-    let target_filter = app.inventory.plugin_target_filter;
-    let health_filter = app.inventory.health_filter;
-    app.resources
-        .iter()
-        .filter(|r| r.kind == ResourceKind::Plugin)
-        .filter(|r| target_filter.matches(r.target))
-        .filter(|r| {
-            health_filter.matches(match r.health {
-                ResourceHealth::Valid => SkillHealth::Valid,
-                ResourceHealth::Warning => SkillHealth::Warning,
-                ResourceHealth::Invalid => SkillHealth::Invalid,
-            })
-        })
-        .filter(|r| {
-            query.is_empty()
-                || r.display_name.to_lowercase().contains(&query)
-                || r.description
-                    .as_deref()
-                    .unwrap_or_default()
-                    .to_lowercase()
-                    .contains(&query)
-                || r.root_dir
-                    .display()
-                    .to_string()
-                    .to_lowercase()
-                    .contains(&query)
-        })
-        .collect()
+    filtered_plugin_indices(
+        &app.resources,
+        &app.derived.resource_search,
+        &app.inventory.plugin_search_query,
+        app.inventory.plugin_target_filter,
+        app.inventory.health_filter,
+        app.inventory.sort_key,
+    )
+    .into_iter()
+    .filter_map(|index| app.resources.get(index))
+    .collect()
 }
 
 fn plugin_list<'a>(app: &'a App, plugins: &[&'a ManagedResource]) -> Element<'a, Message> {

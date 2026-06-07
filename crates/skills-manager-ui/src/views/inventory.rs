@@ -1,13 +1,16 @@
+//! Library view for browsing, filtering, and managing installed skills and resources.
+//!
+//! Renders the main inventory table with scope-grouped skill rows, filter
+//! and sort controls, a detail inspector panel, and resource list views
+//! for plugins and marketplaces.
+
 use std::path::PathBuf;
 
 use iced::{
     Alignment, Element, Length,
     widget::{button, checkbox, column, container, row, scrollable, text, text_input},
 };
-use skills_manager_core::{
-    InstalledSkill, ManagedResource, ResourceHealth, ResourceKind, SkillHealth, SkillScope,
-    format_bytes,
-};
+use skills_manager_core::{InstalledSkill, SkillScope, format_bytes};
 
 use crate::theme::*;
 use crate::{
@@ -27,10 +30,6 @@ const TOOL_SECTION_ORDER: [SkillScope; 8] = [
 ];
 
 pub fn view(app: &App) -> Element<'_, Message> {
-    if app.inventory.resource_kind_filter != crate::app::ResourceKindFilter::Skills {
-        return resource_library_view(app);
-    }
-
     let counts = app.counts();
     let visible = app.filtered_skills();
     let selected = app.selected_skill();
@@ -86,18 +85,11 @@ pub fn view(app: &App) -> Element<'_, Message> {
 
 fn filter_bar(app: &App) -> Element<'_, Message> {
     row![
-        text_input("Filter skills...", &app.inventory.search_query)
-            .on_input(Message::SearchChanged)
+        text_input("Filter skills...", &app.inventory.skill_search_query)
+            .on_input(Message::SkillSearchChanged)
             .padding([SPACING_SM, SPACING_MD])
             .style(theme::input)
             .width(Length::FillPortion(2)),
-        container(components::styled_pick_list(
-            &crate::app::ResourceKindFilter::ALL,
-            Some(app.inventory.resource_kind_filter),
-            Message::ResourceKindSelected,
-            Length::Fill,
-        ))
-        .width(Length::FillPortion(1)),
         container(components::styled_pick_list(
             &ScopeFilter::ALL,
             Some(app.inventory.scope_filter),
@@ -123,249 +115,6 @@ fn filter_bar(app: &App) -> Element<'_, Message> {
     .spacing(SPACING_MD)
     .align_y(Alignment::Center)
     .into()
-}
-
-fn resource_library_view(app: &App) -> Element<'_, Message> {
-    let resources = filtered_resources(app);
-    let selected = selected_resource(app, &resources);
-    let plugins = app
-        .resources
-        .iter()
-        .filter(|resource| resource.kind == ResourceKind::Plugin)
-        .count();
-    let marketplaces = app
-        .resources
-        .iter()
-        .filter(|resource| resource.kind == ResourceKind::Marketplace)
-        .count();
-    let warnings = app
-        .resources
-        .iter()
-        .filter(|resource| resource.health != ResourceHealth::Valid)
-        .count();
-
-    let summary = row![
-        components::summary_stat("resources", app.resources.len().to_string(), PRIMARY),
-        text("\u{00B7}").size(FONT_BODY).color(TEXT_MUTED),
-        components::summary_stat("plugins", plugins.to_string(), INFO),
-        text("\u{00B7}").size(FONT_BODY).color(TEXT_MUTED),
-        components::summary_stat("marketplaces", marketplaces.to_string(), SUCCESS),
-        text("\u{00B7}").size(FONT_BODY).color(TEXT_MUTED),
-        components::summary_stat("need attention", warnings.to_string(), WARNING),
-    ]
-    .spacing(SPACING_SM)
-    .align_y(Alignment::Center);
-
-    let list = components::card(
-        column![
-            filter_bar(app),
-            scrollable(resource_list(app, &resources)).height(Length::Fill),
-        ]
-        .spacing(SPACING_MD),
-    )
-    .width(Length::FillPortion(3))
-    .height(Length::Fill);
-    let inspector = resource_inspector(selected)
-        .width(Length::FillPortion(2))
-        .height(Length::Fill);
-
-    column![
-        summary,
-        row![list, inspector]
-            .spacing(SPACING_LG)
-            .height(Length::Fill)
-    ]
-    .spacing(SPACING_MD)
-    .height(Length::Fill)
-    .into()
-}
-
-fn filtered_resources(app: &App) -> Vec<&ManagedResource> {
-    let query = app.inventory.search_query.trim().to_lowercase();
-    app.resources
-        .iter()
-        .filter(|resource| app.inventory.resource_kind_filter.matches(resource.kind))
-        .filter(|resource| {
-            query.is_empty()
-                || resource.display_name.to_lowercase().contains(&query)
-                || resource
-                    .description
-                    .as_deref()
-                    .unwrap_or_default()
-                    .to_lowercase()
-                    .contains(&query)
-                || resource
-                    .root_dir
-                    .display()
-                    .to_string()
-                    .to_lowercase()
-                    .contains(&query)
-        })
-        .collect()
-}
-
-fn selected_resource<'a>(
-    app: &'a App,
-    resources: &[&'a ManagedResource],
-) -> Option<&'a ManagedResource> {
-    app.inventory
-        .selected_resource_id
-        .as_ref()
-        .and_then(|id| {
-            resources
-                .iter()
-                .copied()
-                .find(|resource| resource.id == *id)
-        })
-        .or_else(|| resources.first().copied())
-}
-
-fn resource_list<'a>(app: &'a App, resources: &[&'a ManagedResource]) -> Element<'a, Message> {
-    if resources.is_empty() {
-        return components::empty_state(
-            "No resources found",
-            "Try another resource type or search query.",
-        )
-        .into();
-    }
-    components::list_column(resources.iter().copied(), SPACING_SM, |resource| {
-        resource_row(app, resource)
-    })
-    .into()
-}
-
-fn resource_row<'a>(app: &'a App, resource: &'a ManagedResource) -> Element<'a, Message> {
-    let selected = app
-        .inventory
-        .selected_resource_id
-        .as_ref()
-        .is_some_and(|id| id == &resource.id);
-    let select = components::small_ghost_button("View", Some(icons::EYE))
-        .on_press(Message::SelectResource(resource.id.clone()));
-
-    container(
-        row![
-            column![
-                text(&resource.display_name).size(FONT_BODY).color(TEXT),
-                text(format!(
-                    "{} - {}",
-                    resource.kind.label(),
-                    resource.root_dir.display()
-                ))
-                .size(FONT_MICRO)
-                .color(TEXT_MUTED)
-                .wrapping(text::Wrapping::WordOrGlyph),
-            ]
-            .spacing(SPACING_XS)
-            .width(Length::Fill),
-            resource_health_dot(resource.health),
-            select,
-        ]
-        .spacing(SPACING_MD)
-        .align_y(Alignment::Center),
-    )
-    .padding([SPACING_MD, SPACING_MD + 2.0])
-    .style(if selected {
-        theme::selected_card
-    } else {
-        theme::card
-    })
-    .into()
-}
-
-fn resource_inspector<'a>(
-    resource: Option<&'a ManagedResource>,
-) -> iced::widget::Container<'a, Message> {
-    match resource {
-        Some(resource) => components::card(
-            scrollable(
-                column![
-                    row![
-                        resource_kind_chip(resource.kind),
-                        resource_target_chip(resource),
-                        components::enablement_chip(resource.enablement),
-                    ]
-                    .spacing(SPACING_SM)
-                    .align_y(Alignment::Center),
-                    text(&resource.display_name).size(FONT_DISPLAY).color(TEXT),
-                    components::detail_section(
-                        "OVERVIEW",
-                        column![
-                            components::detail_row(
-                                "Description",
-                                resource.description.as_deref().unwrap_or("No description"),
-                            ),
-                            components::detail_row(
-                                "Source",
-                                resource.source_url.as_deref().unwrap_or("Unknown"),
-                            ),
-                            components::detail_row("Root", resource.root_dir.display().to_string()),
-                            components::detail_row(
-                                "Manifest",
-                                resource
-                                    .manifest_file
-                                    .as_ref()
-                                    .map(|path| path.display().to_string())
-                                    .unwrap_or_else(|| "N/A".to_string()),
-                            ),
-                        ]
-                        .spacing(SPACING_SM),
-                    ),
-                    components::detail_section(
-                        "METADATA",
-                        components::text_lines(
-                            resource
-                                .metadata
-                                .iter()
-                                .map(|(key, value)| format!("{key}: {value}")),
-                            "No metadata",
-                            TEXT_SECONDARY,
-                            FONT_CAPTION,
-                        ),
-                    ),
-                    components::detail_section(
-                        "DIAGNOSTICS",
-                        components::diagnostic_lines(&resource.diagnostics, "No diagnostics"),
-                    ),
-                ]
-                .spacing(SPACING_LG),
-            )
-            .height(Length::Fill),
-        ),
-        None => components::card(components::empty_state(
-            "No resource selected",
-            "Select a resource to view details.",
-        )),
-    }
-}
-
-fn resource_health_dot<'a>(health: ResourceHealth) -> Element<'a, Message> {
-    components::health_dot(match health {
-        ResourceHealth::Valid => SkillHealth::Valid,
-        ResourceHealth::Warning => SkillHealth::Warning,
-        ResourceHealth::Invalid => SkillHealth::Invalid,
-    })
-}
-
-fn resource_kind_chip<'a>(kind: ResourceKind) -> iced::widget::Container<'a, Message> {
-    let (label, foreground, background) = match kind {
-        ResourceKind::Skill => ("Skill", SUCCESS, SUCCESS_SOFT),
-        ResourceKind::Plugin => ("Plugin", INFO, INFO_SOFT),
-        ResourceKind::Marketplace => ("Marketplace", PRIMARY, PRIMARY_SOFT),
-    };
-    container(text(label).size(FONT_MICRO).color(foreground))
-        .padding([SPACING_XS, SPACING_SM])
-        .style(theme::chip(background, foreground))
-}
-
-fn resource_target_chip<'a>(resource: &ManagedResource) -> iced::widget::Container<'a, Message> {
-    match resource.target {
-        skills_manager_core::AgentToolTarget::Codex => components::scope_chip(SkillScope::Codex),
-        skills_manager_core::AgentToolTarget::ClaudeCode => {
-            components::scope_chip(SkillScope::ClaudeCode)
-        }
-        skills_manager_core::AgentToolTarget::Generic => components::scope_chip(SkillScope::Custom),
-    }
 }
 
 fn skill_list<'a>(app: &'a App, skills: &[&'a InstalledSkill]) -> Element<'a, Message> {

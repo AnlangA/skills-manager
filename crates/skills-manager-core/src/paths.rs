@@ -147,10 +147,12 @@ impl ManagerPaths {
         self.home_dir.join(".codex").join("plugins")
     }
 
+    /// Returns Codex plugin cache directory (`~/.codex/plugins/cache`).
     pub fn codex_plugin_cache_dir(&self) -> PathBuf {
         self.codex_plugins_dir().join("cache")
     }
 
+    /// Returns personal Codex marketplace file (`~/.agents/plugins/marketplace.json`).
     pub fn personal_codex_marketplace_file(&self) -> PathBuf {
         self.home_dir
             .join(".agents")
@@ -185,18 +187,21 @@ impl ManagerPaths {
         self.project.as_ref().map(ProjectRoot::skills_dir)
     }
 
+    /// Returns the project-scoped Codex marketplace file, if a project root is set.
     pub fn project_codex_marketplace_file(&self) -> Option<PathBuf> {
         self.project
             .as_ref()
             .map(ProjectRoot::codex_marketplace_file)
     }
 
+    /// Returns the project-scoped Claude marketplace file, if a project root is set.
     pub fn project_claude_marketplace_file(&self) -> Option<PathBuf> {
         self.project
             .as_ref()
             .map(ProjectRoot::claude_marketplace_file)
     }
 
+    /// Returns the skills directory for a given scope, if resolvable.
     pub fn skills_dir_for_scope(&self, scope: crate::SkillScope) -> Option<PathBuf> {
         match scope {
             crate::SkillScope::Project => self.project_skills_dir(),
@@ -210,6 +215,7 @@ impl ManagerPaths {
         }
     }
 
+    /// Returns all known skill roots with their associated scopes.
     pub fn skill_roots(&self) -> Vec<(crate::SkillScope, PathBuf)> {
         let mut roots = Vec::new();
         if let Some(project_skills_dir) = self.project_skills_dir() {

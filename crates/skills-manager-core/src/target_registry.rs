@@ -1,3 +1,9 @@
+//! Registry wrapper around all available install targets.
+//!
+//! Provides [`TargetRegistry`], a serialized snapshot of every
+//! [`TargetProfile`] converted to [`TargetCapabilities`] for UI and
+//! CLI introspection.
+
 use std::path::PathBuf;
 
 use serde::Serialize;

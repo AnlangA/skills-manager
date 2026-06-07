@@ -1,3 +1,9 @@
+//! Installation operation journaling and rollback plan primitives.
+//!
+//! Provides [`OperationPlan`], a serializable representation of a staged
+//! install operation, and an internal journal that records filesystem
+//! mutations so they can be reversed on error.
+
 use std::{fs, path::PathBuf};
 
 use chrono::{DateTime, Utc};

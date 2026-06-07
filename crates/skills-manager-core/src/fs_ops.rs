@@ -1,3 +1,9 @@
+//! Low-level filesystem helpers for atomic writes.
+//!
+//! Provides a crash-safe write primitive that writes to a temporary file
+//! and renames it into place so that readers never observe a partially
+//! written file.
+
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -6,6 +12,11 @@ use std::{
 
 use crate::Result;
 
+/// Writes `contents` to `path` atomically by writing to a temporary file first.
+///
+/// The temporary file is placed in the same directory as `path` and renamed
+/// into place after the write completes, guaranteeing that readers either see
+/// the old content or the new content, never a partial write.
 pub(crate) fn atomic_write(path: &Path, contents: impl AsRef<[u8]>) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;

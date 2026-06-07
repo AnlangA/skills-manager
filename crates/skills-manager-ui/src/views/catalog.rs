@@ -1,3 +1,8 @@
+//! Catalog export view for generating JSON, XML, or Markdown skill listings.
+//!
+//! Provides format selection, generation, copy-to-clipboard, and file save
+//! actions for exporting the current installed skill inventory.
+
 use iced::{
     Alignment, Element, Length,
     widget::{column, container, row, scrollable, text},

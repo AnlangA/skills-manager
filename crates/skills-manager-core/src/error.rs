@@ -1,3 +1,8 @@
+//! Error types and result alias for `skills-manager-core`.
+//!
+//! Defines [`SkillsManagerError`], the unified error enum used by every
+//! fallible operation in the crate, and the convenience [`Result`] type alias.
+
 use std::path::PathBuf;
 
 use thiserror::Error;

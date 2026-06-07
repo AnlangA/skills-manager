@@ -1,3 +1,9 @@
+//! `skills-manager` CLI entrypoint.
+//!
+//! Provides the command-line interface for discovering, installing, validating,
+//! exporting, and managing local Agent Skills libraries. Built on top of
+//! `skills-manager-core` for all domain logic.
+
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -19,19 +25,24 @@ mod output;
 
 use output::{CommandOutput, OutputMode, write_output};
 
+/// Top-level CLI arguments parsed by `clap`.
 #[derive(Debug, Parser)]
 #[command(version, about = "Manage local Agent Skills libraries")]
 struct Cli {
+    /// Optional project directory override for project-scoped operations.
     #[arg(long, value_name = "DIR", global = true)]
     project: Option<PathBuf>,
 
+    /// Output format selection.
     #[arg(long, value_enum, default_value_t = OutputMode::Text, global = true)]
     output: OutputMode,
 
+    /// Subcommand to execute.
     #[command(subcommand)]
     command: Command,
 }
 
+/// Available CLI subcommands.
 #[derive(Debug, Subcommand)]
 enum Command {
     Workspace,
@@ -189,8 +200,10 @@ impl Command {
     }
 }
 
+/// Resource scan subcommands.
 #[derive(Debug, Subcommand)]
 enum ResourceCommand {
+    /// Scan and list all resources of a given kind.
     Scan {
         #[arg(long, value_enum, default_value_t = CliResourceKind::All)]
         kind: CliResourceKind,
@@ -199,8 +212,10 @@ enum ResourceCommand {
     },
 }
 
+/// Plugin management subcommands.
 #[derive(Debug, Subcommand)]
 enum PluginCommand {
+    /// Scan and list installed plugins.
     Scan {
         #[arg(long, value_enum)]
         target: Option<CliAgentTarget>,
@@ -244,8 +259,10 @@ enum PluginCommand {
     },
 }
 
+/// Marketplace management subcommands.
 #[derive(Debug, Subcommand)]
 enum MarketplaceCommand {
+    /// Manage configured marketplace sources.
     Sources {
         #[command(subcommand)]
         command: MarketplaceSourceCommand,
@@ -263,9 +280,12 @@ enum MarketplaceCommand {
     },
 }
 
+/// Marketplace source subcommands.
 #[derive(Debug, Subcommand)]
 enum MarketplaceSourceCommand {
+    /// List all configured marketplace sources.
     List,
+    /// Add a new marketplace source.
     Add {
         label: String,
         source: String,
@@ -282,17 +302,22 @@ enum MarketplaceSourceCommand {
     },
 }
 
+/// Inventory subcommands.
 #[derive(Debug, Subcommand)]
 enum InventoryCommand {
+    /// Scan and display the full workspace inventory.
     Scan,
+    /// Validate installed skills and report diagnostics.
     Validate {
         #[arg(long, value_enum)]
         target: Option<CliTarget>,
     },
 }
 
+/// Install subcommands.
 #[derive(Debug, Subcommand)]
 enum InstallCommand {
+    /// Preview an install without applying changes.
     Preview {
         source: String,
         #[arg(long)]
@@ -338,8 +363,10 @@ enum InstallCommand {
     },
 }
 
+/// Download cache subcommands.
 #[derive(Debug, Subcommand)]
 enum DownloadCommand {
+    /// Download and cache skills from a GitHub URL.
     Add {
         url: String,
         #[arg(long, value_name = "DIR")]
@@ -351,6 +378,7 @@ enum DownloadCommand {
     },
 }
 
+/// Legacy scope selector retained for backward compatibility.
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum CliScope {
     #[value(alias = "user", alias = "gloab")]
@@ -358,6 +386,7 @@ enum CliScope {
     Project,
 }
 
+/// CLI target scope selector mapping to [`InstallTarget`].
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum CliTarget {
     #[value(alias = "user", alias = "gloab")]
@@ -372,6 +401,7 @@ enum CliTarget {
     Zed,
 }
 
+/// CLI resource kind filter for resource scan commands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum CliResourceKind {
     All,
@@ -391,6 +421,7 @@ impl CliResourceKind {
     }
 }
 
+/// CLI agent target selector for plugin and marketplace commands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum CliAgentTarget {
     Generic,
@@ -409,6 +440,7 @@ impl From<CliAgentTarget> for AgentToolTarget {
     }
 }
 
+/// CLI marketplace search provider selector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum CliMarketplaceProvider {
     #[value(name = "skillsmp", alias = "skills-mp")]
@@ -446,10 +478,14 @@ impl From<CliTarget> for InstallTarget {
     }
 }
 
+/// CLI conflict resolution policy selector.
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum CliConflictPolicy {
+    /// Abort installation when any collision is encountered.
     Block,
+    /// Replace existing destination after moving it to a backup.
     Replace,
+    /// Keep existing destination and resolve using a suffixed folder name.
     Rename,
 }
 
@@ -463,10 +499,14 @@ impl From<CliConflictPolicy> for ConflictPolicy {
     }
 }
 
+/// CLI catalog export format selector.
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum CliCatalogFormat {
+    /// Pretty JSON output.
     Json,
+    /// XML string output.
     Xml,
+    /// Markdown table output.
     Markdown,
 }
 
@@ -490,6 +530,7 @@ impl CliCatalogFormat {
     }
 }
 
+/// Arguments for the preview-install command handler.
 struct PreviewInstallArgs {
     source: String,
     local: bool,
@@ -500,6 +541,7 @@ struct PreviewInstallArgs {
     conflict: CliConflictPolicy,
 }
 
+/// Arguments for the install-url command handler.
 struct InstallUrlArgs {
     url: String,
     target: CliTarget,
@@ -510,6 +552,7 @@ struct InstallUrlArgs {
     conflict: CliConflictPolicy,
 }
 
+/// Arguments for the install-local command handler.
 struct InstallLocalArgs {
     path: PathBuf,
     target: CliTarget,

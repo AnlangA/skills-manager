@@ -1,29 +1,31 @@
+//! UI state structures for each application view.
+//!
+//! Contains the mutable state for inventory browsing, install workflows,
+//! skill scaffolding, catalog export, settings, marketplace management,
+//! and install preview.
+
 use std::path::PathBuf;
 
 use skills_manager_core::{
-    AgentToolTarget, ConflictPolicy, DoctorReport, InstallTarget, MarketplaceDocument,
-    MarketplaceSearchEntry, MarketplaceSearchProvider, MarketplaceSourceRecord, OperationPlan,
-    SkillHealth, SkillScaffoldPreview, SkillScope, TargetProfile,
+    ConflictPolicy, DoctorReport, InstallTarget, OperationPlan, ResourceKind, SkillHealth,
+    SkillScaffoldPreview, SkillScope, TargetProfile,
 };
 
-use super::filters::{
-    HealthFilter, PluginTargetFilter, ResourceKindFilter, ScopeFilter, SortKey, SourceFilter,
-};
-use super::types::{
-    InstallSource, MarketplaceViewTab, PluginViewTab, UiCatalogFormat, UiConflictPolicy, UiScope,
-};
+use super::filters::{HealthFilter, PluginTargetFilter, ScopeFilter, SortKey, SourceFilter};
+use super::types::{InstallSource, UiCatalogFormat, UiConflictPolicy, UiScope};
 
+/// State for the inventory/library view filters, selection, and pending actions.
 #[derive(Debug, Clone)]
 pub struct InventoryState {
-    pub search_query: String,
+    pub skill_search_query: String,
+    pub plugin_search_query: String,
+    pub marketplace_search_query: String,
     pub selected_skill_id: Option<String>,
     pub selected_resource_id: Option<String>,
-    pub resource_kind_filter: ResourceKindFilter,
     pub scope_filter: ScopeFilter,
     pub health_filter: HealthFilter,
     pub source_filter: SourceFilter,
     pub plugin_target_filter: PluginTargetFilter,
-    pub plugin_view_tab: PluginViewTab,
     pub sort_key: SortKey,
     pub pending_remove_skill: Option<PathBuf>,
     pub pending_remove_plugin: Option<String>,
@@ -32,15 +34,15 @@ pub struct InventoryState {
 impl Default for InventoryState {
     fn default() -> Self {
         Self {
-            search_query: String::new(),
+            skill_search_query: String::new(),
+            plugin_search_query: String::new(),
+            marketplace_search_query: String::new(),
             selected_skill_id: None,
             selected_resource_id: None,
-            resource_kind_filter: ResourceKindFilter::Skills,
             scope_filter: ScopeFilter::All,
             health_filter: HealthFilter::All,
             source_filter: SourceFilter::All,
             plugin_target_filter: PluginTargetFilter::All,
-            plugin_view_tab: PluginViewTab::All,
             sort_key: SortKey::Priority,
             pending_remove_skill: None,
             pending_remove_plugin: None,
@@ -48,6 +50,7 @@ impl Default for InventoryState {
     }
 }
 
+/// State for the install workflow view, including source selection and preview.
 #[derive(Debug, Clone)]
 pub struct InstallState {
     pub install_source: InstallSource,
@@ -87,6 +90,7 @@ impl Default for InstallState {
     }
 }
 
+/// State for the skill scaffold creation form.
 #[derive(Debug, Clone)]
 pub struct CreateState {
     pub name: String,
@@ -120,6 +124,7 @@ impl Default for CreateState {
     }
 }
 
+/// State for the catalog export view.
 #[derive(Debug, Clone)]
 pub struct CatalogExportState {
     pub catalog_format: UiCatalogFormat,
@@ -137,6 +142,7 @@ impl Default for CatalogExportState {
     }
 }
 
+/// State for the settings/targets view.
 #[derive(Debug, Clone)]
 pub struct AppSettingsState {
     pub project_path: String,
@@ -160,39 +166,7 @@ impl Default for AppSettingsState {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct MarketplaceState {
-    pub source_label: String,
-    pub source_value: String,
-    pub source_target: AgentToolTarget,
-    pub source_provider: String,
-    pub sources: Vec<MarketplaceSourceRecord>,
-    pub pending_remove_source: Option<String>,
-    pub search_provider: MarketplaceSearchProvider,
-    pub search_query: String,
-    pub search_results: Vec<MarketplaceSearchEntry>,
-    pub inspected_marketplace: Option<MarketplaceDocument>,
-    pub view_tab: MarketplaceViewTab,
-}
-
-impl Default for MarketplaceState {
-    fn default() -> Self {
-        Self {
-            source_label: String::new(),
-            source_value: String::new(),
-            source_target: AgentToolTarget::Generic,
-            source_provider: String::new(),
-            sources: Vec::new(),
-            pending_remove_source: None,
-            search_provider: MarketplaceSearchProvider::SkillsMp,
-            search_query: String::new(),
-            search_results: Vec::new(),
-            inspected_marketplace: None,
-            view_tab: MarketplaceViewTab::Sources,
-        }
-    }
-}
-
+/// State for an install preview showing candidates and conflict information.
 #[derive(Debug, Clone)]
 pub struct PreviewState {
     pub source_label: String,
@@ -214,6 +188,7 @@ impl PreviewState {
     }
 }
 
+/// Per-skill candidate state within an install preview.
 #[derive(Debug, Clone)]
 pub struct PreviewCandidateState {
     pub name: String,
@@ -226,6 +201,7 @@ pub struct PreviewCandidateState {
     pub resource_bytes: u64,
 }
 
+/// State for a single catalog entry loaded from a remote catalog URL.
 #[derive(Debug, Clone)]
 pub struct CatalogEntryState {
     pub name: String,
@@ -236,6 +212,7 @@ pub struct CatalogEntryState {
     pub unavailable_reason: Option<String>,
 }
 
+/// Display state for a cached downloaded skill bundle.
 #[derive(Debug, Clone)]
 pub struct DownloadedEntryState {
     pub source_url: String,
@@ -244,13 +221,24 @@ pub struct DownloadedEntryState {
     pub summary: String,
 }
 
+/// Precomputed derived state for inventory filtering and search.
 #[derive(Debug, Clone, Default)]
 pub struct DerivedInventoryState {
     pub filtered_skill_indices: Vec<usize>,
+    pub resource_search: Vec<ResourceSearchEntry>,
     pub counts: SkillCounts,
     pub visible_scopes_by_id: std::collections::BTreeMap<String, Vec<SkillScope>>,
 }
 
+/// Search index entry for a managed resource.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResourceSearchEntry {
+    pub resource_index: usize,
+    pub kind: ResourceKind,
+    pub haystack: String,
+}
+
+/// Aggregate skill counts broken down by enablement, health, scope, and source.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SkillCounts {
     pub enabled: usize,

@@ -1,3 +1,9 @@
+//! Scaffold generation helpers for creating new skills from templates.
+//!
+//! Provides [`preview_skill_scaffold`] for dry-run previews and
+//! [`create_skill_scaffold`] for persisting a new `SKILL.md` with
+//! validated frontmatter to a target scope.
+
 use std::{fs, path::PathBuf};
 
 use serde::Serialize;

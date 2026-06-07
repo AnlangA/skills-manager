@@ -1,3 +1,11 @@
+//! Target profiles, diagnostics, and repair actions for managed scopes.
+//!
+//! Each install scope (Global, Project, Claude Code, Codex, Zed, etc.)
+//! is described by a [`TargetProfile`] that records layout policy,
+//! enablement strategy, supported frontmatter keys, and budget limits.
+//! The [`doctor_report`] function inspects all targets and produces a
+//! [`DoctorReport`] with diagnostics and proposed repair actions.
+
 use std::{
     fs,
     path::{Path, PathBuf},

@@ -1,3 +1,9 @@
+//! In-memory representation and mutation helpers for `.codex/config.toml`.
+//!
+//! Provides [`CodexConfig`] for reading, modifying, and persisting
+//! Codex skill and plugin enable/disable toggles without destroying
+//! unrelated configuration entries in the TOML document.
+
 use std::{
     fs,
     path::{Path, PathBuf},

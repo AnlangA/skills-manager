@@ -1,3 +1,9 @@
+//! Screen composition and layout for the desktop UI.
+//!
+//! Contains the top-level `view` function, sidebar navigation, and
+//! sub-modules for each screen (library, plugins, install, create,
+//! marketplace, catalog, and targets/settings).
+
 mod catalog;
 mod create;
 mod install;
@@ -15,6 +21,7 @@ use skills_manager_core::{EnablementStrategy, LayoutPolicy};
 use crate::theme::*;
 use crate::{app::ActiveView, app::App, app::Message, components, icons, theme};
 
+/// Builds the top-level view with sidebar and main content area.
 pub fn view(app: &App) -> Element<'_, Message> {
     let content = row![sidebar(app), main_content(app)]
         .height(Length::Fill)
@@ -43,6 +50,12 @@ fn sidebar(app: &App) -> Element<'_, Message> {
             Message::ActiveViewSelected(ActiveView::Plugins),
         ),
         components::nav_button(
+            ActiveView::Marketplace.label(),
+            nav_icon(ActiveView::Marketplace),
+            app.active_view == ActiveView::Marketplace,
+            Message::ActiveViewSelected(ActiveView::Marketplace),
+        ),
+        components::nav_button(
             ActiveView::Install.label(),
             nav_icon(ActiveView::Install),
             app.active_view == ActiveView::Install,
@@ -59,12 +72,6 @@ fn sidebar(app: &App) -> Element<'_, Message> {
 
     let manage_label = components::section_label("MANAGE");
     let manage_nav = column![
-        components::nav_button(
-            ActiveView::Marketplace.label(),
-            nav_icon(ActiveView::Marketplace),
-            app.active_view == ActiveView::Marketplace,
-            Message::ActiveViewSelected(ActiveView::Marketplace),
-        ),
         components::nav_button(
             ActiveView::Catalog.label(),
             nav_icon(ActiveView::Catalog),
@@ -176,6 +183,7 @@ fn nav_icon(view: ActiveView) -> &'static str {
     }
 }
 
+/// Returns a human-readable label for the given enablement strategy.
 pub(super) fn strategy_label(strategy: EnablementStrategy) -> &'static str {
     match strategy {
         EnablementStrategy::ConfigToggle => "Config toggle",
@@ -183,6 +191,7 @@ pub(super) fn strategy_label(strategy: EnablementStrategy) -> &'static str {
     }
 }
 
+/// Returns a human-readable label for the given layout policy.
 pub(super) fn layout_label(layout: LayoutPolicy) -> &'static str {
     match layout {
         LayoutPolicy::NestedAllowed => "Nested resources allowed",

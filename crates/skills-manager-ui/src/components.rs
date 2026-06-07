@@ -1,3 +1,9 @@
+//! Reusable UI component helpers for cards, buttons, fields, chips, and lists.
+//!
+//! Provides builder functions for common widget patterns used across all
+//! views, including styled cards, form fields, pick lists, action buttons,
+//! health/enablement/scope chips, and diagnostic display helpers.
+
 use iced::{
     Alignment, Element, Length,
     widget::{Button, Container, button, column, container, pick_list, row, text, text_input},

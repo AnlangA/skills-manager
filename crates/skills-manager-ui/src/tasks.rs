@@ -1,3 +1,11 @@
+//! Async background task builders for the iced runtime.
+//!
+//! Each public function wraps a core operation in a [`Task::perform`] call,
+//! mapping the result into a [`Message`] variant for the update loop.
+//! Handles workspace loading, install/preview/download workflows, catalog
+//! generation, toggle/remove actions, marketplace operations, and scaffold
+//! creation.
+
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -6,12 +14,11 @@ use std::{
 use iced::Task;
 use skills_manager_core::{
     AgentToolTarget, CatalogFormat, ConflictPolicy, DownloadedSkillEntry, InstallRequest,
-    InstallTarget, Installer, ManagerConfig, ManagerPaths, MarketplaceSearchProvider,
-    OperationPlan, ProjectRoot, ResourceManager, SkillScaffoldRequest, WorkspaceSnapshot,
-    add_marketplace_source, create_skill_scaffold, download_github_catalog, download_github_skills,
-    download_github_skills_to_cache, downloaded_skill_entry, export_installed_catalog,
-    preview_skill_scaffold, refresh_marketplace_source, remove_downloaded_skills,
-    remove_marketplace_source, scan_installed_skills, search_marketplace,
+    InstallTarget, Installer, ManagerConfig, ManagerPaths, OperationPlan, ProjectRoot,
+    ResourceManager, SkillScaffoldRequest, WorkspaceSnapshot, create_skill_scaffold,
+    download_github_catalog, download_github_skills, download_github_skills_to_cache,
+    downloaded_skill_entry, export_installed_catalog, preview_skill_scaffold,
+    remove_downloaded_skills, scan_installed_skills,
 };
 
 use crate::app::{
@@ -375,60 +382,6 @@ pub fn remove_plugin_task(
             Ok(format!("Removed plugin. Backup: {}", backup.display()))
         },
         Message::PluginRemoved,
-    )
-}
-
-pub fn add_marketplace_source_task(
-    project_path: String,
-    label: String,
-    source: String,
-    target: AgentToolTarget,
-    provider: Option<String>,
-) -> Task<Message> {
-    Task::perform(
-        async move {
-            let paths = paths_from_project(&project_path)?;
-            add_marketplace_source(&paths, &label, &source, Some(target), provider)
-                .map_err(|error| error.to_string())
-        },
-        Message::MarketplaceSourceAdded,
-    )
-}
-
-pub fn refresh_marketplace_source_task(project_path: String, label: String) -> Task<Message> {
-    Task::perform(
-        async move {
-            let paths = paths_from_project(&project_path)?;
-            refresh_marketplace_source(&paths, &label)
-                .await
-                .map_err(|error| error.to_string())
-        },
-        Message::MarketplaceInspected,
-    )
-}
-
-pub fn remove_marketplace_source_task(project_path: String, label: String) -> Task<Message> {
-    Task::perform(
-        async move {
-            let paths = paths_from_project(&project_path)?;
-            remove_marketplace_source(&paths, &label).map_err(|error| error.to_string())
-        },
-        Message::MarketplaceSourceRemoved,
-    )
-}
-
-pub fn search_marketplace_task(
-    provider: MarketplaceSearchProvider,
-    query: String,
-) -> Task<Message> {
-    Task::perform(
-        async move {
-            search_marketplace(provider, &query)
-                .await
-                .map(|result| result.entries)
-                .map_err(|error| error.to_string())
-        },
-        Message::MarketplaceSearchLoaded,
     )
 }
 

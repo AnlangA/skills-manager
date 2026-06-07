@@ -1,3 +1,10 @@
+//! Persistent application configuration for install state, downloads, and sources.
+//!
+//! Provides [`ManagerConfig`], the TOML-backed settings store that tracks
+//! disabled skill files, installed bundles, custom install roots, download
+//! cache metadata, and marketplace source records. Also provides
+//! [`ManagerConfigUpdateLock`] for coarse-grained concurrent write safety.
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, OpenOptions},

@@ -1,3 +1,9 @@
+//! Skill scaffold creation view with form fields and live preview.
+//!
+//! Renders a form for skill name, description, target scope, tags, and
+//! advanced options, with a side-by-side preview panel showing the
+//! generated `SKILL.md` content and validation diagnostics.
+
 use iced::{
     Alignment, Element, Length,
     widget::{checkbox, column, row, scrollable, text},

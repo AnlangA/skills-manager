@@ -1,3 +1,10 @@
+//! Plugin/resource indexing, marketplace management, and plugin operations.
+//!
+//! Provides [`ResourceManager`] as the high-level facade for scanning,
+//! installing, enabling, and removing plugins and marketplace documents
+//! across Codex, Claude Code, and generic targets. Also contains the
+//! marketplace source CRUD helpers and remote search integration.
+
 use std::{
     collections::{BTreeMap, HashMap},
     fmt, fs,

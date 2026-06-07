@@ -1,3 +1,9 @@
+//! Application color palette, typography scale, spacing tokens, and widget styles.
+//!
+//! Defines all semantic colors, font sizes, spacing constants, and
+//! `iced` style functions for containers, buttons, inputs, pick lists,
+//! and navigation elements used throughout the desktop UI.
+
 use iced::{
     Background, Border, Color, Shadow, Theme, Vector, theme,
     widget::{button, container, pick_list, text_input},

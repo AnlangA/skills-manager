@@ -1,3 +1,9 @@
+//! Install view with source selection, destination configuration, and preview.
+//!
+//! Provides a step-by-step workflow for choosing a skill source (GitHub URL,
+//! local folder, downloaded cache, or catalog), selecting a target scope and
+//! conflict policy, previewing candidates, and applying the installation.
+
 use iced::{
     Alignment, Element, Length,
     widget::{checkbox, column, container, row, scrollable, text},

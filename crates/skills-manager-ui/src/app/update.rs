@@ -1,3 +1,8 @@
+//! Application update loop and top-level state transitions.
+//!
+//! Contains the [`App`] struct definition, its initialization methods,
+//! and the main `update` function that processes [`Message`] variants.
+
 use iced::Task;
 
 use super::derived::*;
@@ -7,6 +12,7 @@ use super::state::*;
 use super::types::*;
 use crate::tasks;
 
+/// Top-level application state containing all view state and derived data.
 pub struct App {
     pub snapshot: Option<skills_manager_core::WorkspaceSnapshot>,
     pub skills: Vec<skills_manager_core::InstalledSkill>,
@@ -17,7 +23,6 @@ pub struct App {
     pub install: InstallState,
     pub create: CreateState,
     pub catalog: CatalogExportState,
-    pub marketplace: MarketplaceState,
     pub settings: AppSettingsState,
     pub status: String,
     pub busy: bool,
@@ -25,6 +30,7 @@ pub struct App {
 }
 
 impl App {
+    /// Initializes the application with default settings and loads the workspace.
     pub fn init() -> (Self, Task<Message>) {
         Self::init_with_smoke_test(false)
     }
@@ -40,7 +46,6 @@ impl App {
             install: InstallState::default(),
             create: CreateState::default(),
             catalog: CatalogExportState::default(),
-            marketplace: MarketplaceState::default(),
             settings: AppSettingsState::default(),
             status: "Ready".to_string(),
             busy: true,
@@ -116,9 +121,10 @@ impl App {
     pub fn rebuild_derived(&mut self) {
         self.derived.counts = counts_from_skills(&self.skills);
         self.derived.visible_scopes_by_id = visible_scopes_by_id(&self.skills);
+        self.derived.resource_search = resource_search_index(&self.resources);
         self.derived.filtered_skill_indices = filtered_indices(
             &self.skills,
-            &self.inventory.search_query,
+            &self.inventory.skill_search_query,
             self.inventory.scope_filter,
             self.inventory.health_filter,
             self.inventory.source_filter,
@@ -187,7 +193,6 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                     app.settings.doctor_report = Some(snapshot.doctor_report.clone());
                     app.skills = snapshot.skills.clone();
                     app.resources = snapshot.resources.clone();
-                    app.marketplace.sources = snapshot.marketplace_sources.clone();
                     app.snapshot = Some(snapshot);
                     app.rebuild_derived();
                     app.ensure_selection();
@@ -200,10 +205,18 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             app.settings.project_path = value;
             Task::none()
         }
-        Message::SearchChanged(value) => {
-            app.inventory.search_query = value;
+        Message::SkillSearchChanged(value) => {
+            app.inventory.skill_search_query = value;
             app.rebuild_derived();
             app.ensure_selection();
+            Task::none()
+        }
+        Message::PluginSearchChanged(value) => {
+            app.inventory.plugin_search_query = value;
+            Task::none()
+        }
+        Message::MarketplaceSearchChanged(value) => {
+            app.inventory.marketplace_search_query = value;
             Task::none()
         }
         Message::ActiveViewSelected(view) => {
@@ -212,13 +225,6 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::ScopeFilterSelected(scope_filter) => {
             app.inventory.scope_filter = scope_filter;
-            app.rebuild_derived();
-            app.ensure_selection();
-            Task::none()
-        }
-        Message::ResourceKindSelected(kind_filter) => {
-            app.inventory.resource_kind_filter = kind_filter;
-            app.inventory.selected_resource_id = None;
             app.rebuild_derived();
             app.ensure_selection();
             Task::none()
@@ -595,124 +601,6 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             app.status = result.unwrap_or_else(|error| error);
             tasks::load_workspace_task(app.settings.project_path.clone())
         }
-        Message::MarketplaceSourceLabelChanged(value) => {
-            app.marketplace.source_label = value;
-            Task::none()
-        }
-        Message::MarketplaceSourceValueChanged(value) => {
-            app.marketplace.source_value = value;
-            Task::none()
-        }
-        Message::MarketplaceSourceTargetSelected(target) => {
-            app.marketplace.source_target = target;
-            Task::none()
-        }
-        Message::MarketplaceSourceProviderChanged(value) => {
-            app.marketplace.source_provider = value;
-            Task::none()
-        }
-        Message::AddMarketplaceSource => {
-            let label = app.marketplace.source_label.trim().to_string();
-            let source = app.marketplace.source_value.trim().to_string();
-            if label.is_empty() || source.is_empty() {
-                app.status = "Enter a marketplace label and source first.".to_string();
-                return Task::none();
-            }
-            app.busy = true;
-            app.status = "Adding marketplace source...".to_string();
-            tasks::add_marketplace_source_task(
-                app.settings.project_path.clone(),
-                label,
-                source,
-                app.marketplace.source_target,
-                optional_string(&app.marketplace.source_provider),
-            )
-        }
-        Message::MarketplaceSourceAdded(result) => {
-            app.busy = false;
-            match result {
-                Ok(source) => {
-                    app.status = format!("Added marketplace source {}.", source.label);
-                    app.marketplace.source_label.clear();
-                    app.marketplace.source_value.clear();
-                }
-                Err(error) => app.status = error,
-            }
-            tasks::load_workspace_task(app.settings.project_path.clone())
-        }
-        Message::RefreshMarketplaceSource(label) => {
-            app.busy = true;
-            app.status = format!("Refreshing marketplace source {label}...");
-            tasks::refresh_marketplace_source_task(app.settings.project_path.clone(), label)
-        }
-        Message::MarketplaceInspected(result) => {
-            app.busy = false;
-            match result {
-                Ok(document) => {
-                    app.status = format!(
-                        "Loaded marketplace {} with {} plugin(s).",
-                        document.name,
-                        document.entries.len()
-                    );
-                    app.marketplace.inspected_marketplace = Some(document);
-                }
-                Err(error) => app.status = error,
-            }
-            tasks::load_workspace_task(app.settings.project_path.clone())
-        }
-        Message::RequestRemoveMarketplaceSource(label) => {
-            app.marketplace.pending_remove_source = Some(label);
-            app.status =
-                "Press Confirm remove to delete the marketplace source record.".to_string();
-            Task::none()
-        }
-        Message::ConfirmRemoveMarketplaceSource(label) => {
-            app.busy = true;
-            app.marketplace.pending_remove_source = None;
-            app.status = "Removing marketplace source...".to_string();
-            tasks::remove_marketplace_source_task(app.settings.project_path.clone(), label)
-        }
-        Message::MarketplaceSourceRemoved(result) => {
-            app.busy = false;
-            app.status = result
-                .map(|label| format!("Removed marketplace source {label}."))
-                .unwrap_or_else(|error| error);
-            tasks::load_workspace_task(app.settings.project_path.clone())
-        }
-        Message::MarketplaceSearchQueryChanged(value) => {
-            app.marketplace.search_query = value;
-            Task::none()
-        }
-        Message::SearchMarketplace => {
-            let query = app.marketplace.search_query.trim().to_string();
-            if query.is_empty() {
-                app.status = "Enter a search query first.".to_string();
-                return Task::none();
-            }
-            app.busy = true;
-            app.status = "Searching marketplace provider...".to_string();
-            tasks::search_marketplace_task(app.marketplace.search_provider, query)
-        }
-        Message::MarketplaceSearchLoaded(result) => {
-            app.busy = false;
-            match result {
-                Ok(entries) => {
-                    app.status = format!("Loaded {} marketplace result(s).", entries.len());
-                    app.marketplace.search_results = entries;
-                }
-                Err(error) => app.status = error,
-            }
-            Task::none()
-        }
-        Message::PreviewMarketplaceSearchEntry(url) => {
-            app.install.install_source = InstallSource::Url;
-            app.install.source_url = url;
-            app.install.preview = None;
-            app.active_view = ActiveView::Install;
-            app.status =
-                "Marketplace result loaded into Install. Preview before installing.".to_string();
-            Task::none()
-        }
         Message::PreviewDownloaded(root_dir) => {
             let target = match current_install_target(&app.install) {
                 Ok(target) => target,
@@ -868,7 +756,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::app::filters::{ResourceKindFilter, ScopeFilter};
+    use crate::app::filters::ScopeFilter;
     use skills_manager_core::{
         AgentToolTarget, ConflictPolicy, InstallTarget, InstalledSkill, ResourceKind,
         SkillEnablement, SkillFrontmatter, SkillHealth, SkillScope, WorkspaceSnapshot,
@@ -959,24 +847,7 @@ mod tests {
     }
 
     #[test]
-    fn resource_kind_filter_selection_resets_resource_selection() {
-        let (mut app, _) = App::init_with_smoke_test(false);
-        app.inventory.selected_resource_id = Some("plugin:codex:demo".to_string());
-
-        let _ = update(
-            &mut app,
-            Message::ResourceKindSelected(ResourceKindFilter::Plugins),
-        );
-
-        assert_eq!(
-            app.inventory.resource_kind_filter,
-            ResourceKindFilter::Plugins
-        );
-        assert_eq!(app.inventory.selected_resource_id, None);
-    }
-
-    #[test]
-    fn workspace_loaded_populates_marketplace_sources_and_resources() {
+    fn workspace_loaded_populates_marketplace_resources() {
         let dir = tempdir().unwrap();
         let paths = skills_manager_core::ManagerPaths::with_home(
             dir.path().join("home"),
@@ -997,10 +868,11 @@ mod tests {
         let (mut app, _) = App::init_with_smoke_test(false);
         let _ = update(&mut app, Message::WorkspaceLoaded(Ok(snapshot)));
 
-        assert_eq!(app.marketplace.sources.len(), 1);
-        assert_eq!(app.marketplace.sources[0].label, "local-market");
         assert!(app.resources.iter().any(|resource| {
             resource.kind == ResourceKind::Marketplace && resource.display_name == "local-market"
+        }));
+        assert!(app.derived.resource_search.iter().any(|entry| {
+            entry.kind == ResourceKind::Marketplace && entry.haystack.contains("local-market")
         }));
     }
 
@@ -1024,11 +896,32 @@ mod tests {
             vec![SkillScope::Project, SkillScope::Global]
         );
 
-        app.inventory.search_query = "disabled".to_string();
+        app.inventory.skill_search_query = "disabled".to_string();
         app.rebuild_derived();
         let visible = app.filtered_skills();
         assert_eq!(visible.len(), 1);
         assert_eq!(visible[0].scope, SkillScope::Codex);
+    }
+
+    #[test]
+    fn page_search_queries_are_independent() {
+        let (mut app, _) = App::init_with_smoke_test(false);
+        app.skills = vec![
+            installed_skill(SkillScope::Zed, "zed-demo"),
+            installed_skill(SkillScope::Codex, "codex-demo"),
+        ];
+        app.inventory.skill_search_query = "codex".to_string();
+        app.rebuild_derived();
+        assert_eq!(app.filtered_skills().len(), 1);
+
+        let _ = update(
+            &mut app,
+            Message::PluginSearchChanged("browser".to_string()),
+        );
+
+        assert_eq!(app.inventory.skill_search_query, "codex");
+        assert_eq!(app.inventory.plugin_search_query, "browser");
+        assert_eq!(app.filtered_skills().len(), 1);
     }
 
     #[test]
