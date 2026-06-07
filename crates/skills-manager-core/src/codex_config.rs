@@ -109,6 +109,32 @@ impl CodexConfig {
         table["enabled"] = toml_edit::value(enabled);
         configs.push(table);
     }
+
+    pub fn forget(&mut self, skill_file: &Path) {
+        let target = path_key(skill_file);
+        let Some(configs) = self
+            .document
+            .get_mut("skills")
+            .and_then(|skills| skills.get_mut("config"))
+            .and_then(Item::as_array_of_tables_mut)
+        else {
+            return;
+        };
+
+        let mut kept = ArrayOfTables::new();
+        for table in configs.iter() {
+            let path_matches = table
+                .get("path")
+                .and_then(Item::as_value)
+                .and_then(Value::as_str)
+                .is_some_and(|path| path == target);
+
+            if !path_matches {
+                kept.push(table.clone());
+            }
+        }
+        *configs = kept;
+    }
 }
 
 fn ensure_skill_configs(document: &mut DocumentMut) -> &mut ArrayOfTables {

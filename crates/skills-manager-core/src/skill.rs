@@ -6,11 +6,13 @@ use std::{
 
 use serde::Deserialize;
 use serde_yaml::Value;
+use tracing::{debug, info};
 use walkdir::WalkDir;
 
 use crate::{
     DiagnosticSeverity, ManagerConfig, ManagerPaths, Result, SkillDiagnostic, SkillEnablement,
-    SkillFrontmatter, SkillHealth, SkillScope, SkillsManagerError, model::InstalledSkill,
+    SkillFrontmatter, SkillHealth, SkillScope, SkillsManagerError, codex_config::CodexConfig,
+    model::InstalledSkill, target_specific_diagnostics,
 };
 
 const MAX_NAME_LENGTH: usize = 64;
@@ -19,6 +21,8 @@ const MIN_DESCRIPTION_LENGTH: usize = 12;
 const MAX_COMPATIBILITY_LENGTH: usize = 1000;
 const RESOURCE_WARNING_BYTES: u64 = 25 * 1024 * 1024;
 const RESOURCE_WARNING_FILES: usize = 100;
+pub const DISABLED_SKILLS_DIR: &str = ".skills-disabled";
+pub const LEGACY_DISABLED_SKILLS_DIR: &str = ".disabled";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkillCandidate {
@@ -39,19 +43,34 @@ struct RawFrontmatter {
     compatibility: Option<Value>,
     #[serde(default, rename = "allowed-tools")]
     allowed_tools: Option<Value>,
+    #[serde(default)]
+    tags: Option<Value>,
+    #[serde(default, rename = "disable-model-invocation")]
+    disable_model_invocation: Option<Value>,
+    #[serde(default, alias = "when-to-use")]
+    when_to_use: Option<Value>,
     #[serde(flatten)]
     metadata: BTreeMap<String, Value>,
 }
 
 pub fn scan_installed_skills(paths: &ManagerPaths) -> Result<Vec<InstalledSkill>> {
+    info!("scanning installed skills");
     let app_config = ManagerConfig::load(paths)?;
+    let codex_config = CodexConfig::load(paths)?;
     let mut skills = Vec::new();
 
-    for (scope, root) in paths.skill_roots() {
+    let mut roots = paths.skill_roots();
+    for root in &app_config.custom_install_roots {
+        roots.push((SkillScope::Custom, root.clone()));
+    }
+
+    for (scope, root) in dedupe_roots(roots) {
         if !root.exists() {
+            debug!(scope = scope.label(), root = %root.display(), "skill root does not exist");
             continue;
         }
 
+        debug!(scope = scope.label(), root = %root.display(), "scanning skill root");
         for candidate in discover_skill_candidates(&root)? {
             skills.push(read_installed_skill(
                 scope,
@@ -61,12 +80,24 @@ pub fn scan_installed_skills(paths: &ManagerPaths) -> Result<Vec<InstalledSkill>
                 candidate.resource_count,
                 candidate.resource_bytes,
                 &app_config,
+                &codex_config,
+            )?);
+        }
+
+        for candidate in discover_disabled_skill_candidates(&root)? {
+            skills.push(read_disabled_installed_skill(
+                scope,
+                &root,
+                candidate,
+                &app_config,
+                &codex_config,
             )?);
         }
     }
 
     sort_skills(&mut skills);
     mark_shadowed_skills(&mut skills);
+    info!(count = skills.len(), "scanned installed skills");
     Ok(skills)
 }
 
@@ -78,6 +109,55 @@ pub fn read_installed_skill(
     resource_count: usize,
     resource_bytes: u64,
     app_config: &ManagerConfig,
+    codex_config: &CodexConfig,
+) -> Result<InstalledSkill> {
+    read_installed_skill_with_options(
+        scope,
+        root_dir,
+        frontmatter,
+        diagnostics,
+        resource_count,
+        resource_bytes,
+        app_config,
+        codex_config,
+        None,
+        &[],
+    )
+}
+
+fn read_disabled_installed_skill(
+    scope: SkillScope,
+    skills_root: &Path,
+    candidate: SkillCandidate,
+    app_config: &ManagerConfig,
+    codex_config: &CodexConfig,
+) -> Result<InstalledSkill> {
+    let enabled_root = enabled_root_for_disabled_root(skills_root, &candidate.root_dir);
+    read_installed_skill_with_options(
+        scope,
+        candidate.root_dir,
+        candidate.frontmatter,
+        candidate.diagnostics,
+        candidate.resource_count,
+        candidate.resource_bytes,
+        app_config,
+        codex_config,
+        Some(SkillEnablement::Disabled),
+        &[enabled_root],
+    )
+}
+
+fn read_installed_skill_with_options(
+    scope: SkillScope,
+    root_dir: PathBuf,
+    frontmatter: SkillFrontmatter,
+    mut diagnostics: Vec<SkillDiagnostic>,
+    resource_count: usize,
+    resource_bytes: u64,
+    app_config: &ManagerConfig,
+    codex_config: &CodexConfig,
+    enablement_override: Option<SkillEnablement>,
+    metadata_fallback_roots: &[PathBuf],
 ) -> Result<InstalledSkill> {
     let skill_file = root_dir.join("SKILL.md");
     if !skill_file.exists() {
@@ -91,12 +171,23 @@ pub fn read_installed_skill(
         .to_string();
     let display_name = frontmatter.name.clone().unwrap_or(folder_name);
     let id = format!("{}:{}", scope.id_prefix(), root_dir.display());
-    let enablement = if app_config.is_disabled(&skill_file) {
-        SkillEnablement::Disabled
-    } else {
-        SkillEnablement::Enabled
-    };
-    let metadata = app_config.installed.get(&path_key(&root_dir));
+    let enablement = enablement_override.unwrap_or_else(|| {
+        if app_config.is_disabled(&skill_file) || codex_config.is_disabled(&skill_file) {
+            SkillEnablement::Disabled
+        } else {
+            SkillEnablement::Enabled
+        }
+    });
+    let metadata = std::iter::once(&root_dir)
+        .chain(metadata_fallback_roots.iter())
+        .find_map(|metadata_root| app_config.installed.get(&path_key(metadata_root)));
+    diagnostics.extend(target_specific_diagnostics(
+        scope,
+        &root_dir,
+        &frontmatter,
+        resource_count,
+        resource_bytes,
+    ));
     let health = health_from_diagnostics(&diagnostics, false);
 
     Ok(InstalledSkill {
@@ -118,11 +209,27 @@ pub fn read_installed_skill(
     })
 }
 
+fn dedupe_roots(roots: Vec<(SkillScope, PathBuf)>) -> Vec<(SkillScope, PathBuf)> {
+    let mut seen = HashMap::new();
+    let mut deduped = Vec::new();
+
+    for (scope, root) in roots {
+        let key = path_key(&root);
+        if seen.insert(key, ()).is_none() {
+            deduped.push((scope, root));
+        }
+    }
+
+    deduped
+}
+
 pub fn discover_skill_candidates(root: &Path) -> Result<Vec<SkillCandidate>> {
     if !root.exists() {
+        debug!(root = %root.display(), "candidate root does not exist");
         return Ok(Vec::new());
     }
 
+    debug!(root = %root.display(), "discovering skill candidates");
     let mut candidates = Vec::new();
 
     for entry in WalkDir::new(root)
@@ -130,6 +237,7 @@ pub fn discover_skill_candidates(root: &Path) -> Result<Vec<SkillCandidate>> {
         .max_depth(4)
         .follow_links(false)
         .into_iter()
+        .filter_entry(|entry| !is_ignored_discovery_entry(entry.file_name()))
         .filter_map(std::result::Result::ok)
     {
         if !entry.file_type().is_file() || entry.file_name() != "SKILL.md" {
@@ -145,7 +253,45 @@ pub fn discover_skill_candidates(root: &Path) -> Result<Vec<SkillCandidate>> {
     }
 
     candidates.sort_by(|left, right| left.root_dir.cmp(&right.root_dir));
+    debug!(
+        root = %root.display(),
+        count = candidates.len(),
+        "discovered skill candidates"
+    );
     Ok(candidates)
+}
+
+fn discover_disabled_skill_candidates(root: &Path) -> Result<Vec<SkillCandidate>> {
+    let mut candidates = discover_skill_candidates(&disabled_store_root_for_skills_root(root))?;
+    candidates.extend(discover_skill_candidates(
+        &root.join(LEGACY_DISABLED_SKILLS_DIR),
+    )?);
+    candidates.sort_by(|left, right| left.root_dir.cmp(&right.root_dir));
+    Ok(candidates)
+}
+
+fn is_ignored_discovery_entry(name: &std::ffi::OsStr) -> bool {
+    name == DISABLED_SKILLS_DIR
+        || name == LEGACY_DISABLED_SKILLS_DIR
+        || name.to_str().is_some_and(|name| name.contains(".backup-"))
+}
+
+fn enabled_root_for_disabled_root(skills_root: &Path, disabled_root: &Path) -> PathBuf {
+    let disabled_parent = disabled_store_root_for_skills_root(skills_root);
+    let legacy_disabled_parent = skills_root.join(LEGACY_DISABLED_SKILLS_DIR);
+
+    disabled_root
+        .strip_prefix(&disabled_parent)
+        .or_else(|_| disabled_root.strip_prefix(&legacy_disabled_parent))
+        .map(|relative| skills_root.join(relative))
+        .unwrap_or_else(|_| disabled_root.to_path_buf())
+}
+
+pub fn disabled_store_root_for_skills_root(skills_root: &Path) -> PathBuf {
+    skills_root
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .join(DISABLED_SKILLS_DIR)
 }
 
 pub fn read_skill_candidate(root_dir: PathBuf, skill_file: PathBuf) -> SkillCandidate {
@@ -200,6 +346,16 @@ pub fn parse_skill_frontmatter(skill_file: &Path) -> Result<SkillFrontmatter> {
             .as_ref()
             .map(value_to_string_list)
             .unwrap_or_default(),
+        tags: raw
+            .tags
+            .as_ref()
+            .map(value_to_string_list)
+            .unwrap_or_default(),
+        disable_model_invocation: raw
+            .disable_model_invocation
+            .as_ref()
+            .and_then(value_to_bool),
+        when_to_use: raw.when_to_use.as_ref().and_then(scalar_to_string),
         metadata: raw
             .metadata
             .iter()
@@ -341,7 +497,11 @@ fn mark_shadowed_skills(skills: &mut [InstalledSkill]) {
     let mut winners: HashMap<String, (PathBuf, usize)> = HashMap::new();
 
     for (index, skill) in skills.iter_mut().enumerate() {
-        let key = skill_identity(skill);
+        if !skill.is_enabled() {
+            continue;
+        }
+
+        let key = installed_skill_identity(skill);
         if let Some((winner_path, _winner_index)) = winners.get(&key) {
             skill.shadowed_by = Some(winner_path.clone());
             skill.diagnostics.push(SkillDiagnostic::warning(format!(
@@ -369,7 +529,7 @@ fn sort_skills(skills: &mut [InstalledSkill]) {
     });
 }
 
-fn skill_identity(skill: &InstalledSkill) -> String {
+pub fn installed_skill_identity(skill: &InstalledSkill) -> String {
     skill
         .frontmatter
         .name
@@ -377,6 +537,24 @@ fn skill_identity(skill: &InstalledSkill) -> String {
         .map(sanitize_folder_name)
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| sanitize_folder_name(&skill.destination_name()))
+}
+
+pub fn visible_skill_scopes<'a>(
+    skills: impl IntoIterator<Item = &'a InstalledSkill>,
+    skill: &InstalledSkill,
+) -> Vec<SkillScope> {
+    let identity = installed_skill_identity(skill);
+    let mut scopes = skills
+        .into_iter()
+        .filter(|candidate| {
+            candidate.is_enabled() && installed_skill_identity(candidate) == identity
+        })
+        .map(|candidate| candidate.scope)
+        .collect::<Vec<_>>();
+
+    scopes.sort_by_key(|scope| scope.sort_rank());
+    scopes.dedup();
+    scopes
 }
 
 fn extract_frontmatter(content: &str) -> Option<&str> {
@@ -406,6 +584,18 @@ fn value_to_string_list(value: &Value) -> Vec<String> {
             .filter(|value| !value.is_empty())
             .collect(),
         other => scalar_to_string(other).into_iter().collect(),
+    }
+}
+
+fn value_to_bool(value: &Value) -> Option<bool> {
+    match value {
+        Value::Bool(value) => Some(*value),
+        Value::String(value) => match value.trim().to_ascii_lowercase().as_str() {
+            "true" | "yes" | "1" => Some(true),
+            "false" | "no" | "0" => Some(false),
+            _ => None,
+        },
+        _ => None,
     }
 }
 
@@ -480,7 +670,7 @@ pub(crate) fn unique_folder_name(
     unreachable!("the loop always returns")
 }
 
-pub(crate) fn sanitize_folder_name(name: &str) -> String {
+pub fn sanitize_folder_name(name: &str) -> String {
     name.chars()
         .map(|ch| {
             if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
@@ -499,11 +689,11 @@ pub(crate) fn sanitize_folder_name(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{fs, path::PathBuf};
 
     use tempfile::tempdir;
 
-    use crate::{ProjectRoot, SkillScope};
+    use crate::{ProjectRoot, SkillEnablement, SkillFrontmatter, SkillHealth, SkillScope};
 
     use super::*;
 
@@ -526,6 +716,25 @@ mod tests {
             parsed.metadata.get("owner").map(String::as_str),
             Some("team-ai")
         );
+    }
+
+    #[test]
+    fn parses_target_specific_frontmatter_fields() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("SKILL.md");
+        fs::write(
+            &file,
+            "---\nname: demo-skill\ndescription: Use this skill when testing target metadata\ntags: [codex, zed]\nwhen_to_use: Use when testing Claude Code metadata\ndisable-model-invocation: true\n---\n# Demo\n",
+        )
+        .unwrap();
+
+        let parsed = parse_skill_frontmatter(&file).unwrap();
+        assert_eq!(parsed.tags, vec!["codex", "zed"]);
+        assert_eq!(
+            parsed.when_to_use.as_deref(),
+            Some("Use when testing Claude Code metadata")
+        );
+        assert_eq!(parsed.disable_model_invocation, Some(true));
     }
 
     #[test]
@@ -586,15 +795,15 @@ mod tests {
     }
 
     #[test]
-    fn project_skill_shadows_user_skill_with_same_name() {
+    fn project_skill_shadows_global_skill_with_same_name() {
         let dir = tempdir().unwrap();
         let project = dir.path().join("project");
-        let user_skill = dir.path().join("home/.agents/skills/demo-skill");
+        let global_skill = dir.path().join("home/.agents/skills/demo-skill");
         let project_skill = project.join(".agents/skills/demo-skill");
-        fs::create_dir_all(&user_skill).unwrap();
+        fs::create_dir_all(&global_skill).unwrap();
         fs::create_dir_all(&project_skill).unwrap();
         let skill_doc = "---\nname: demo-skill\ndescription: A useful demo skill\n---\n";
-        fs::write(user_skill.join("SKILL.md"), skill_doc).unwrap();
+        fs::write(global_skill.join("SKILL.md"), skill_doc).unwrap();
         fs::write(project_skill.join("SKILL.md"), skill_doc).unwrap();
 
         let paths = ManagerPaths::with_home(
@@ -605,17 +814,93 @@ mod tests {
         );
         let skills = scan_installed_skills(&paths).unwrap();
 
-        let user = skills
+        let global = skills
             .iter()
-            .find(|skill| skill.scope == SkillScope::User)
+            .find(|skill| skill.scope == SkillScope::Global)
             .unwrap();
-        assert_eq!(user.health, SkillHealth::Shadowed);
-        assert!(user.shadowed_by.is_some());
+        assert_eq!(global.health, SkillHealth::Shadowed);
+        assert!(global.shadowed_by.is_some());
+    }
+
+    #[test]
+    fn disabled_project_skill_does_not_shadow_enabled_global_skill() {
+        let dir = tempdir().unwrap();
+        let project = dir.path().join("project");
+        let global_skill = dir.path().join("home/.agents/skills/demo-skill");
+        let disabled_project_skill = project.join(".agents/skills/.disabled/demo-skill");
+        fs::create_dir_all(&global_skill).unwrap();
+        fs::create_dir_all(&disabled_project_skill).unwrap();
+        let skill_doc = "---\nname: demo-skill\ndescription: A useful demo skill\n---\n";
+        fs::write(global_skill.join("SKILL.md"), skill_doc).unwrap();
+        fs::write(disabled_project_skill.join("SKILL.md"), skill_doc).unwrap();
+
+        let paths = ManagerPaths::with_home(
+            dir.path().join("home"),
+            dir.path().join("data"),
+            dir.path().join("config"),
+            Some(ProjectRoot::new(&project)),
+        );
+        let skills = scan_installed_skills(&paths).unwrap();
+
+        let project = skills
+            .iter()
+            .find(|skill| skill.scope == SkillScope::Project)
+            .unwrap();
+        assert_eq!(project.enablement, SkillEnablement::Disabled);
+        let global = skills
+            .iter()
+            .find(|skill| skill.scope == SkillScope::Global)
+            .unwrap();
+        assert_eq!(global.health, SkillHealth::Valid);
+        assert!(global.shadowed_by.is_none());
+    }
+
+    #[test]
+    fn visible_skill_scopes_groups_enabled_targets_by_skill_identity() {
+        let skills = vec![
+            installed_skill(SkillScope::Global, "demo-skill", SkillEnablement::Enabled),
+            installed_skill(SkillScope::Codex, "demo-skill", SkillEnablement::Disabled),
+            installed_skill(SkillScope::Zed, "demo-skill", SkillEnablement::Enabled),
+            installed_skill(SkillScope::Droid, "other-skill", SkillEnablement::Enabled),
+        ];
+
+        let scopes = visible_skill_scopes(skills.iter(), &skills[0]);
+
+        assert_eq!(scopes, vec![SkillScope::Global, SkillScope::Zed]);
     }
 
     #[test]
     fn sanitizes_folder_names() {
         assert_eq!(sanitize_folder_name("Demo Skill!"), "demo-skill");
         assert_eq!(sanitize_folder_name("  ___ "), "___");
+    }
+
+    fn installed_skill(
+        scope: SkillScope,
+        name: &str,
+        enablement: SkillEnablement,
+    ) -> InstalledSkill {
+        let root_dir = PathBuf::from(format!("/tmp/{}/{}", scope.id_prefix(), name));
+
+        InstalledSkill {
+            id: format!("{}:{}", scope.id_prefix(), root_dir.display()),
+            display_name: name.to_string(),
+            description: None,
+            scope,
+            root_dir: root_dir.clone(),
+            skill_file: root_dir.join("SKILL.md"),
+            frontmatter: SkillFrontmatter {
+                name: Some(name.to_string()),
+                ..SkillFrontmatter::default()
+            },
+            enablement,
+            health: SkillHealth::Valid,
+            diagnostics: Vec::new(),
+            resource_count: 0,
+            resource_bytes: 0,
+            shadowed_by: None,
+            source_url: None,
+            installed_at: None,
+        }
     }
 }

@@ -3,11 +3,11 @@ use iced::{
     widget::{button, container, pick_list, text_input},
 };
 
-pub const BACKGROUND: Color = Color::from_rgb8(246, 248, 251);
-pub const SIDEBAR: Color = Color::from_rgb8(17, 24, 39);
+pub const BACKGROUND: Color = Color::from_rgb8(247, 249, 252);
+pub const SIDEBAR: Color = Color::from_rgb8(15, 23, 42);
 pub const SURFACE: Color = Color::from_rgb8(255, 255, 255);
-pub const SURFACE_ALT: Color = Color::from_rgb8(248, 250, 252);
-pub const BORDER: Color = Color::from_rgb8(214, 221, 230);
+pub const SURFACE_ALT: Color = Color::from_rgb8(243, 246, 250);
+pub const BORDER: Color = Color::from_rgb8(224, 231, 240);
 pub const TEXT: Color = Color::from_rgb8(17, 24, 39);
 pub const MUTED: Color = Color::from_rgb8(71, 85, 105);
 pub const SUBTLE: Color = Color::from_rgb8(100, 116, 139);
@@ -57,9 +57,9 @@ pub fn panel(_theme: &Theme) -> container::Style {
             color: BORDER,
         },
         shadow: Shadow {
-            color: Color::from_rgba8(15, 23, 42, 0.08),
-            offset: Vector::new(0.0, 2.0),
-            blur_radius: 14.0,
+            color: Color::from_rgba8(15, 23, 42, 0.05),
+            offset: Vector::new(0.0, 1.0),
+            blur_radius: 10.0,
         },
         ..container::Style::default()
     }
@@ -81,7 +81,7 @@ pub fn flat_panel(_theme: &Theme) -> container::Style {
 pub fn table_header(_theme: &Theme) -> container::Style {
     container::Style {
         text_color: Some(SUBTLE),
-        background: Some(Background::Color(Color::from_rgb8(241, 245, 249))),
+        background: Some(Background::Color(SURFACE_ALT)),
         border: Border {
             width: 1.0,
             radius: 6.0.into(),
@@ -107,7 +107,7 @@ pub fn table_row(_theme: &Theme) -> container::Style {
 pub fn selected_table_row(_theme: &Theme) -> container::Style {
     container::Style {
         text_color: Some(TEXT),
-        background: Some(Background::Color(Color::from_rgb8(239, 246, 255))),
+        background: Some(Background::Color(Color::from_rgb8(236, 245, 255))),
         border: Border {
             width: 1.0,
             radius: 6.0.into(),
@@ -117,20 +117,42 @@ pub fn selected_table_row(_theme: &Theme) -> container::Style {
     }
 }
 
-pub fn subtle_button(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |_theme, _status| button::Style {
-        text_color: if selected { PRIMARY } else { MUTED },
-        background: Some(Background::Color(if selected {
-            Color::from_rgb8(219, 234, 254)
-        } else {
-            Color::from_rgb8(248, 250, 252)
-        })),
+pub fn metric_panel(_theme: &Theme) -> container::Style {
+    container::Style {
+        text_color: Some(TEXT),
+        background: Some(Background::Color(SURFACE)),
         border: Border {
             width: 1.0,
             radius: 6.0.into(),
-            color: if selected { PRIMARY } else { BORDER },
+            color: BORDER,
         },
-        ..button::Style::default()
+        ..container::Style::default()
+    }
+}
+
+pub fn subtle_button(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |_theme, status| {
+        let background = match (selected, status) {
+            (true, button::Status::Hovered | button::Status::Pressed) => {
+                Color::from_rgb8(191, 219, 254)
+            }
+            (true, _) => Color::from_rgb8(219, 234, 254),
+            (false, button::Status::Hovered | button::Status::Pressed) => {
+                Color::from_rgb8(241, 245, 249)
+            }
+            (false, _) => SURFACE,
+        };
+
+        button::Style {
+            text_color: if selected { PRIMARY } else { MUTED },
+            background: Some(Background::Color(background)),
+            border: Border {
+                width: 1.0,
+                radius: 6.0.into(),
+                color: if selected { PRIMARY } else { BORDER },
+            },
+            ..button::Style::default()
+        }
     }
 }
 
@@ -181,18 +203,27 @@ pub fn danger_button(theme: &Theme, status: button::Status) -> button::Style {
 }
 
 pub fn nav_button(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |_theme, _status| button::Style {
-        text_color: if selected { SIDEBAR } else { Color::WHITE },
-        background: Some(Background::Color(if selected {
-            Color::WHITE
-        } else {
-            Color::from_rgb8(31, 41, 55)
-        })),
-        border: Border {
-            radius: 6.0.into(),
-            ..Border::default()
-        },
-        ..button::Style::default()
+    move |_theme, status| {
+        let background = match (selected, status) {
+            (true, button::Status::Hovered | button::Status::Pressed) => {
+                Color::from_rgb8(226, 232, 240)
+            }
+            (true, _) => Color::WHITE,
+            (false, button::Status::Hovered | button::Status::Pressed) => {
+                Color::from_rgb8(30, 41, 59)
+            }
+            (false, _) => SIDEBAR,
+        };
+
+        button::Style {
+            text_color: if selected { SIDEBAR } else { Color::WHITE },
+            background: Some(Background::Color(background)),
+            border: Border {
+                radius: 6.0.into(),
+                ..Border::default()
+            },
+            ..button::Style::default()
+        }
     }
 }
 

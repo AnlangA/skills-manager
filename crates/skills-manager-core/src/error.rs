@@ -33,6 +33,9 @@ pub enum SkillsManagerError {
     #[error("skill path is not inside the configured global or project skill roots: {0}")]
     UnknownSkillScope(PathBuf),
 
+    #[error("downloaded skills path is not managed by this app: {0}")]
+    UnknownDownload(PathBuf),
+
     #[error("failed to parse {path}: {source}")]
     ParseToml {
         path: PathBuf,
@@ -77,4 +80,7 @@ pub enum SkillsManagerError {
 
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
+
+    #[error("yaml error: {0}")]
+    Yaml(#[from] serde_yaml::Error),
 }

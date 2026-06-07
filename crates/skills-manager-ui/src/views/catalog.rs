@@ -14,7 +14,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
         .iter()
         .filter(|skill| skill.is_exportable())
         .count();
-    let output: Element<'_, Message> = if app.catalog_output.is_empty() {
+    let output: Element<'_, Message> = if app.catalog.catalog_output.is_empty() {
         components::empty_state(
             "No export generated",
             "Generate a catalog to preview JSON, XML, or Markdown output.",
@@ -23,7 +23,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
     } else {
         container(
             scrollable(
-                text(&app.catalog_output)
+                text(&app.catalog.catalog_output)
                     .size(12)
                     .color(theme::TEXT)
                     .wrapping(text::Wrapping::WordOrGlyph),
@@ -44,7 +44,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
             row![
                 pick_list(
                     UiCatalogFormat::ALL,
-                    Some(app.catalog_format),
+                    Some(app.catalog.catalog_format),
                     Message::CatalogFormatSelected
                 )
                 .padding([9, 12])
@@ -53,22 +53,21 @@ pub fn view(app: &App) -> Element<'_, Message> {
                 components::primary_button("Generate", Some(icons::FILE))
                     .on_press_maybe((!app.busy).then_some(Message::GenerateCatalog)),
                 components::secondary_button("Copy", Some(icons::COPY)).on_press_maybe(
-                    (!app.catalog_output.is_empty()).then_some(Message::CopyCatalog)
+                    (!app.catalog.catalog_output.is_empty()).then_some(Message::CopyCatalog)
                 ),
                 components::secondary_button("Save", Some(icons::DOWNLOAD)).on_press_maybe(
-                    (!app.busy && !app.catalog_output.is_empty()).then_some(Message::SaveCatalog)
+                    (!app.busy && !app.catalog.catalog_output.is_empty())
+                        .then_some(Message::SaveCatalog)
                 ),
             ]
             .spacing(10)
             .align_y(Alignment::Center),
-            components::field(
+            components::compact_field(
                 "Save path",
-                "Relative paths are saved under the selected project folder.",
                 "agent-skills-catalog.json",
-                &app.catalog_save_path,
+                &app.catalog.catalog_save_path,
                 Message::CatalogSavePathChanged,
             ),
-            components::inline_status(&app.status, app.busy),
             output,
         ]
         .spacing(12),

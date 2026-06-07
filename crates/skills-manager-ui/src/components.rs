@@ -11,38 +11,39 @@ pub fn panel<'a>(content: impl Into<Element<'a, Message>>) -> Container<'a, Mess
 }
 
 pub fn flat_panel<'a>(content: impl Into<Element<'a, Message>>) -> Container<'a, Message> {
-    container(content).padding(12).style(theme::flat_panel)
+    container(content).padding(10).style(theme::flat_panel)
 }
 
 pub fn section_header<'a>(
     title: impl Into<String>,
     meta: impl Into<String>,
 ) -> Element<'a, Message> {
-    row![
+    column![
         text(title.into()).size(16).color(theme::TEXT),
-        text(meta.into()).size(12).color(theme::MUTED),
+        text(meta.into())
+            .size(12)
+            .color(theme::MUTED)
+            .wrapping(text::Wrapping::WordOrGlyph),
     ]
-    .spacing(10)
-    .align_y(Alignment::Center)
+    .spacing(3)
     .into()
 }
 
-pub fn metric<'a>(
+pub fn compact_metric<'a>(
     label: impl Into<String>,
     value: impl Into<String>,
     color: iced::Color,
 ) -> Container<'a, Message> {
     container(
-        row![
-            text(value.into()).size(22).color(color),
-            text(label.into()).size(12).color(theme::MUTED),
+        column![
+            text(value.into()).size(18).color(color),
+            text(label.into()).size(11).color(theme::MUTED),
         ]
-        .spacing(8)
-        .align_y(Alignment::Center),
+        .spacing(2),
     )
-    .padding([9, 12])
+    .padding([8, 10])
     .width(Length::FillPortion(1))
-    .style(theme::flat_panel)
+    .style(theme::metric_panel)
 }
 
 pub fn field<'a, F>(
@@ -68,17 +69,25 @@ where
     .into()
 }
 
-pub fn notice<'a>(title: &'a str, body: &'a str) -> Container<'a, Message> {
-    flat_panel(
-        column![
-            text(title).size(13).color(theme::TEXT),
-            text(body)
-                .size(12)
-                .color(theme::MUTED)
-                .wrapping(text::Wrapping::WordOrGlyph),
-        ]
-        .spacing(5),
-    )
+pub fn compact_field<'a, F>(
+    label: &'a str,
+    placeholder: &'a str,
+    value: &'a str,
+    on_input: F,
+) -> Element<'a, Message>
+where
+    F: 'a + Fn(String) -> Message,
+{
+    column![
+        text(label).size(12).color(theme::TEXT),
+        text_input(placeholder, value)
+            .on_input(on_input)
+            .padding([9, 12])
+            .style(theme::input)
+            .width(Length::Fill),
+    ]
+    .spacing(5)
+    .into()
 }
 
 pub fn primary_button<'a>(label: &'a str, icon: Option<&'static str>) -> Button<'a, Message> {
@@ -165,7 +174,37 @@ pub fn scope_chip<'a>(scope: SkillScope) -> Container<'a, Message> {
             theme::PRIMARY,
             iced::Color::from_rgb8(219, 234, 254),
         ),
-        SkillScope::User => chip("User", theme::CYAN, iced::Color::from_rgb8(207, 250, 254)),
+        SkillScope::Global => chip("Global", theme::CYAN, iced::Color::from_rgb8(207, 250, 254)),
+        SkillScope::ClaudeCode => chip(
+            "Claude Code",
+            iced::Color::from_rgb8(126, 34, 206),
+            iced::Color::from_rgb8(243, 232, 255),
+        ),
+        SkillScope::Droid => chip(
+            "Droid",
+            iced::Color::from_rgb8(4, 120, 87),
+            iced::Color::from_rgb8(209, 250, 229),
+        ),
+        SkillScope::Pencode => chip(
+            "Pencode",
+            iced::Color::from_rgb8(180, 83, 9),
+            iced::Color::from_rgb8(254, 243, 199),
+        ),
+        SkillScope::Codex => chip(
+            "Codex",
+            iced::Color::from_rgb8(15, 118, 110),
+            iced::Color::from_rgb8(204, 251, 241),
+        ),
+        SkillScope::Zed => chip(
+            "Zed",
+            iced::Color::from_rgb8(79, 70, 229),
+            iced::Color::from_rgb8(224, 231, 255),
+        ),
+        SkillScope::Custom => chip(
+            "Custom",
+            iced::Color::from_rgb8(126, 34, 206),
+            iced::Color::from_rgb8(243, 232, 255),
+        ),
     }
 }
 
@@ -194,11 +233,6 @@ pub fn status_badge<'a>(status: &'a str, busy: bool) -> Container<'a, Message> {
     )
     .padding([8, 12])
     .style(theme::chip(background, foreground))
-}
-
-pub fn inline_status<'a>(status: &'a str, busy: bool) -> Container<'a, Message> {
-    let title = if busy { "Working" } else { "Current status" };
-    notice(title, status)
 }
 
 pub fn empty_state<'a>(title: &'a str, body: &'a str) -> Container<'a, Message> {

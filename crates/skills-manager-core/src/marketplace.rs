@@ -222,10 +222,10 @@ mod tests {
         health: SkillHealth,
     ) -> InstalledSkill {
         InstalledSkill {
-            id: format!("user:/tmp/{name}"),
+            id: format!("global:/tmp/{name}"),
             display_name: name.to_string(),
             description: Some(format!("{name} description")),
-            scope: SkillScope::User,
+            scope: SkillScope::Global,
             root_dir: PathBuf::from(format!("/tmp/{name}")),
             skill_file: PathBuf::from(format!("/tmp/{name}/SKILL.md")),
             frontmatter: SkillFrontmatter {

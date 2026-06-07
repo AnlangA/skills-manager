@@ -6,28 +6,63 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillScope {
     Project,
-    User,
+    #[serde(alias = "User")]
+    Global,
+    ClaudeCode,
+    Droid,
+    Pencode,
+    Codex,
+    Zed,
+    Custom,
 }
 
 impl SkillScope {
+    pub const INSTALL_TARGETS: [Self; 7] = [
+        Self::Global,
+        Self::ClaudeCode,
+        Self::Droid,
+        Self::Pencode,
+        Self::Codex,
+        Self::Zed,
+        Self::Project,
+    ];
+
     pub fn label(self) -> &'static str {
         match self {
             Self::Project => "Project",
-            Self::User => "User",
+            Self::Global => "Global",
+            Self::ClaudeCode => "Claude Code",
+            Self::Droid => "Droid",
+            Self::Pencode => "Pencode",
+            Self::Codex => "Codex",
+            Self::Zed => "Zed",
+            Self::Custom => "Custom",
         }
     }
 
     pub fn id_prefix(self) -> &'static str {
         match self {
             Self::Project => "project",
-            Self::User => "user",
+            Self::Global => "global",
+            Self::ClaudeCode => "claude-code",
+            Self::Droid => "droid",
+            Self::Pencode => "pencode",
+            Self::Codex => "codex",
+            Self::Zed => "zed",
+            Self::Custom => "custom",
         }
     }
 
     pub fn sort_rank(self) -> u8 {
         match self {
             Self::Project => 0,
-            Self::User => 1,
+            Self::Global => 1,
+            Self::ClaudeCode => 2,
+            Self::Droid => 3,
+            Self::Pencode => 4,
+            Self::Codex => 5,
+            Self::Zed => 6,
+            Self::Custom => 7,
         }
     }
 }
@@ -119,6 +154,10 @@ pub struct SkillFrontmatter {
     pub compatibility: Option<String>,
     #[serde(rename = "allowed-tools")]
     pub allowed_tools: Vec<String>,
+    pub tags: Vec<String>,
+    #[serde(rename = "disable-model-invocation")]
+    pub disable_model_invocation: Option<bool>,
+    pub when_to_use: Option<String>,
     pub metadata: BTreeMap<String, String>,
 }
 

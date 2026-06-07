@@ -14,3 +14,6 @@ iced.workspace = true
 iced_aw.workspace = true
 iced_lucide.workspace = true
 skills-manager-core = { path = "../skills-manager-core" }
+
+[dev-dependencies]
+tempfile.workspace = true

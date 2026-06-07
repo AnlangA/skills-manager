@@ -76,11 +76,31 @@ impl ManagerPaths {
     }
 
     pub fn user_skills_dir(&self) -> PathBuf {
-        self.home_dir.join(".agents").join("skills")
+        self.global_skills_dir()
     }
 
     pub fn global_skills_dir(&self) -> PathBuf {
-        self.user_skills_dir()
+        self.home_dir.join(".agents").join("skills")
+    }
+
+    pub fn claude_code_skills_dir(&self) -> PathBuf {
+        self.home_dir.join(".claude").join("skills")
+    }
+
+    pub fn droid_skills_dir(&self) -> PathBuf {
+        self.home_dir.join(".droid").join("skills")
+    }
+
+    pub fn pencode_skills_dir(&self) -> PathBuf {
+        self.home_dir.join(".pencode").join("skills")
+    }
+
+    pub fn codex_skills_dir(&self) -> PathBuf {
+        self.home_dir.join(".codex").join("skills")
+    }
+
+    pub fn zed_skills_dir(&self) -> PathBuf {
+        self.home_dir.join(".config").join("zed").join("skills")
     }
 
     pub fn codex_config_file(&self) -> PathBuf {
@@ -95,12 +115,32 @@ impl ManagerPaths {
         self.project.as_ref().map(ProjectRoot::skills_dir)
     }
 
+    pub fn skills_dir_for_scope(&self, scope: crate::SkillScope) -> Option<PathBuf> {
+        match scope {
+            crate::SkillScope::Project => self.project_skills_dir(),
+            crate::SkillScope::Global => Some(self.global_skills_dir()),
+            crate::SkillScope::ClaudeCode => Some(self.claude_code_skills_dir()),
+            crate::SkillScope::Droid => Some(self.droid_skills_dir()),
+            crate::SkillScope::Pencode => Some(self.pencode_skills_dir()),
+            crate::SkillScope::Codex => Some(self.codex_skills_dir()),
+            crate::SkillScope::Zed => Some(self.zed_skills_dir()),
+            crate::SkillScope::Custom => None,
+        }
+    }
+
     pub fn skill_roots(&self) -> Vec<(crate::SkillScope, PathBuf)> {
         let mut roots = Vec::new();
         if let Some(project_skills_dir) = self.project_skills_dir() {
             roots.push((crate::SkillScope::Project, project_skills_dir));
         }
-        roots.push((crate::SkillScope::User, self.user_skills_dir()));
+        for scope in crate::SkillScope::INSTALL_TARGETS {
+            if scope == crate::SkillScope::Project {
+                continue;
+            }
+            if let Some(root) = self.skills_dir_for_scope(scope) {
+                roots.push((scope, root));
+            }
+        }
         roots
     }
 }

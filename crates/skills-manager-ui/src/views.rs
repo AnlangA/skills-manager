@@ -1,11 +1,12 @@
 mod catalog;
+mod create;
 mod install;
 mod inventory;
 mod settings;
 
 use iced::{
     Alignment, Element, Length,
-    widget::{column, container, row, rule, text},
+    widget::{column, container, row, text},
 };
 
 use crate::{app::ActiveView, app::App, app::Message, components, icons, theme};
@@ -46,31 +47,14 @@ pub(super) fn diagnostics_text<'a>(diagnostics: &'a [String]) -> Element<'a, Mes
         .into()
 }
 
-pub(super) fn source_summary(source: &str) -> &str {
-    if source.contains("github.com") {
-        "GitHub source"
-    } else if source.trim().is_empty() {
-        "unknown source"
-    } else {
-        "known source"
-    }
-}
-
 fn sidebar(app: &App) -> Element<'_, Message> {
     let nav = ActiveView::ALL.into_iter().fold(
         column![
-            row![
-                icons::icon(icons::SPARKLES, 19),
-                text("Agent Skills").size(18)
-            ]
-            .spacing(10)
-            .align_y(Alignment::Center),
-            text("Open local skill library")
-                .size(12)
-                .color(iced::Color::from_rgb8(203, 213, 225)),
-            rule::horizontal(1),
+            row![icons::icon(icons::SPARKLES, 19), text("Skills").size(18)]
+                .spacing(10)
+                .align_y(Alignment::Center),
         ]
-        .spacing(10),
+        .spacing(12),
         |nav, view| {
             nav.push(components::nav_button(
                 view.label(),
@@ -82,28 +66,11 @@ fn sidebar(app: &App) -> Element<'_, Message> {
     );
 
     container(
-        column![
-            nav.width(Length::Fill),
-            container(column![
-                text("Open convention").size(12).color(iced::Color::WHITE),
-                text("~/.agents/skills\n<project>/.agents/skills")
-                    .size(11)
-                    .color(iced::Color::from_rgb8(203, 213, 225)),
-            ])
-            .padding(10)
-            .style(|_| iced::widget::container::Style {
-                background: Some(iced::Background::Color(iced::Color::from_rgb8(31, 41, 55))),
-                border: iced::Border {
-                    radius: 8.0.into(),
-                    ..iced::Border::default()
-                },
-                ..iced::widget::container::Style::default()
-            }),
-        ]
-        .spacing(16)
-        .height(Length::Fill),
+        column![nav.width(Length::Fill),]
+            .spacing(16)
+            .height(Length::Fill),
     )
-    .width(Length::Fixed(220.0))
+    .width(Length::Fixed(176.0))
     .height(Length::Fill)
     .padding(16)
     .style(theme::sidebar)
@@ -114,15 +81,11 @@ fn main_content(app: &App) -> Element<'_, Message> {
     let refresh = components::secondary_button("Refresh", Some(icons::REFRESH))
         .on_press_maybe((!app.busy).then_some(Message::Refresh));
     let header = row![
-        column![
-            text(app.active_view.label()).size(26).color(theme::TEXT),
-            text(header_subtitle(app.active_view))
-                .size(13)
-                .color(theme::MUTED),
-        ]
-        .spacing(3)
-        .width(Length::Fill),
-        components::status_badge(&app.status, app.busy).max_width(460),
+        text(app.active_view.label())
+            .size(24)
+            .color(theme::TEXT)
+            .width(Length::Fill),
+        components::status_badge(&app.status, app.busy).max_width(420),
         refresh,
     ]
     .spacing(14)
@@ -131,29 +94,22 @@ fn main_content(app: &App) -> Element<'_, Message> {
     let body = match app.active_view {
         ActiveView::Inventory => inventory::view(app),
         ActiveView::Install => install::view(app),
+        ActiveView::Create => create::view(app),
         ActiveView::Catalog => catalog::view(app),
         ActiveView::Settings => settings::view(app),
     };
 
-    container(column![header, body].padding(18).spacing(14))
+    container(column![header, body].padding([16, 18]).spacing(12))
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
-}
-
-fn header_subtitle(view: ActiveView) -> &'static str {
-    match view {
-        ActiveView::Inventory => "Search, validate, enable, disable, and inspect local skills",
-        ActiveView::Install => "Preview GitHub, local, or catalog sources before installing",
-        ActiveView::Catalog => "Export enabled and usable skills for agent runtimes",
-        ActiveView::Settings => "Project path and open Agent Skills storage rules",
-    }
 }
 
 fn nav_icon(view: ActiveView) -> &'static str {
     match view {
         ActiveView::Inventory => icons::LIST,
         ActiveView::Install => icons::DOWNLOAD,
+        ActiveView::Create => icons::FILE,
         ActiveView::Catalog => icons::DATABASE,
         ActiveView::Settings => icons::SETTINGS,
     }
