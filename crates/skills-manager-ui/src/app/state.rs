@@ -6,13 +6,16 @@
 
 use std::path::PathBuf;
 
+use iced::widget::text_editor;
 use skills_manager_core::{
-    ConflictPolicy, DoctorReport, InstallTarget, OperationPlan, ResourceKind, SkillHealth,
-    SkillScaffoldPreview, SkillScope, TargetProfile,
+    ConflictPolicy, DoctorReport, InstallTarget, McpServerTransport, OperationPlan, ResourceKind,
+    SkillHealth, SkillScaffoldPreview, SkillScope, TargetProfile,
 };
 
 use super::filters::{HealthFilter, PluginTargetFilter, ScopeFilter, SortKey, SourceFilter};
-use super::types::{InstallSource, UiCatalogFormat, UiConflictPolicy, UiScope};
+use super::types::{
+    ExpandedEditorTarget, InstallSource, UiAgentTarget, UiCatalogFormat, UiConflictPolicy, UiScope,
+};
 
 /// State for the inventory/library view filters, selection, and pending actions.
 #[derive(Debug, Clone)]
@@ -46,6 +49,60 @@ impl Default for InventoryState {
             sort_key: SortKey::Priority,
             pending_remove_skill: None,
             pending_remove_plugin: None,
+        }
+    }
+}
+
+/// State for the MCP management view.
+#[derive(Debug, Clone)]
+pub struct McpState {
+    pub search_query: String,
+    pub target_filter: PluginTargetFilter,
+    pub health_filter: HealthFilter,
+    pub target: UiAgentTarget,
+    pub transport: McpServerTransport,
+    pub name: String,
+    pub command: String,
+    pub args: String,
+    pub env: String,
+    pub url: String,
+    pub headers: String,
+    pub enabled: bool,
+    pub pending_remove: Option<String>,
+}
+
+impl Default for McpState {
+    fn default() -> Self {
+        Self {
+            search_query: String::new(),
+            target_filter: PluginTargetFilter::All,
+            health_filter: HealthFilter::All,
+            target: UiAgentTarget::Codex,
+            transport: McpServerTransport::Stdio,
+            name: String::new(),
+            command: String::new(),
+            args: String::new(),
+            env: String::new(),
+            url: String::new(),
+            headers: String::new(),
+            enabled: true,
+            pending_remove: None,
+        }
+    }
+}
+
+/// State for the right-hand expanded text editor shared by form-heavy pages.
+#[derive(Debug, Clone)]
+pub struct ExpandedEditorState {
+    pub active: Option<ExpandedEditorTarget>,
+    pub content: text_editor::Content,
+}
+
+impl Default for ExpandedEditorState {
+    fn default() -> Self {
+        Self {
+            active: None,
+            content: text_editor::Content::new(),
         }
     }
 }

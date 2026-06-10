@@ -17,6 +17,10 @@ pub enum SkillsManagerError {
     #[error("could not find a usable home directory")]
     HomeDirectoryMissing,
 
+    /// A user-provided path is invalid for the current platform.
+    #[error("invalid path: {0}")]
+    InvalidPath(String),
+
     /// URL parsing or normalization failed before reaching a concrete action.
     #[error("invalid URL: {0}")]
     InvalidUrl(String),

@@ -646,7 +646,7 @@ mod tests {
 
         assert!(remove_downloaded_skills(&paths, &untracked).is_err());
         let removed = remove_downloaded_skills(&paths, &entry.root_dir).unwrap();
-        assert_eq!(removed, entry.root_dir);
+        assert_eq!(removed, PathBuf::from(&path_key(&entry.root_dir)));
         assert!(!removed.exists());
         assert!(list_downloaded_skills(&paths).unwrap().is_empty());
     }

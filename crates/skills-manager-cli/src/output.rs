@@ -68,12 +68,18 @@ pub enum CommandOutput {
     Resources { resources: Vec<ManagedResource> },
     /// Discovered plugins list.
     Plugins { plugins: Vec<ManagedResource> },
+    /// Discovered MCP server list.
+    McpServers { servers: Vec<ManagedResource> },
+    /// Single MCP server resource.
+    McpServer { server: ManagedResource },
     /// Plugin install preview for a single plugin target.
     PluginPreview { preview: PluginInstallPreview },
     /// Plugin install execution result.
     PluginInstall { result: PluginInstallResult },
     /// Path backup after plugin removal.
     RemovedPlugin { backup: PathBuf },
+    /// Path backup after MCP server removal.
+    RemovedMcpServer { backup: PathBuf },
     /// Configured marketplace sources.
     MarketplaceSources {
         sources: Vec<MarketplaceSourceRecord>,
@@ -350,6 +356,17 @@ fn write_text_output(output: &CommandOutput) -> anyhow::Result<()> {
                 print_resource_line(plugin);
             }
         }
+        CommandOutput::McpServers { servers } => {
+            if servers.is_empty() {
+                println!("No MCP servers found.");
+            }
+            for server in servers {
+                print_resource_line(server);
+            }
+        }
+        CommandOutput::McpServer { server } => {
+            print_resource_line(server);
+        }
         CommandOutput::PluginPreview { preview } => {
             println!(
                 "Plugin preview: {} [{}] -> {}",
@@ -386,6 +403,9 @@ fn write_text_output(output: &CommandOutput) -> anyhow::Result<()> {
         }
         CommandOutput::RemovedPlugin { backup } => {
             println!("Removed plugin. Backup: {}", backup.display());
+        }
+        CommandOutput::RemovedMcpServer { backup } => {
+            println!("Removed MCP server. Backup: {}", backup.display());
         }
         CommandOutput::MarketplaceSources { sources } => {
             if sources.is_empty() {

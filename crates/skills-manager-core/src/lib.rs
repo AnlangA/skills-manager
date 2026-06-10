@@ -16,6 +16,7 @@ pub mod github;
 pub mod install;
 pub mod manager_config;
 pub mod marketplace;
+pub mod mcp;
 pub mod model;
 pub mod operation;
 pub mod paths;
@@ -48,6 +49,11 @@ pub use marketplace::{
     CatalogFormat, Marketplace, SkillCatalog, SkillCatalogEntry, SkillCatalogSource,
     export_installed_catalog,
 };
+/// MCP server discovery and configuration helpers.
+pub use mcp::{
+    McpServerRequest, McpServerTransport, add_mcp_server, remove_mcp_server, scan_mcp_servers,
+    set_mcp_server_enabled,
+};
 /// Shared domain models for skills, diagnostics, resources, and scopes.
 pub use model::{
     AgentToolTarget, DiagnosticSeverity, InstalledSkill, ManagedResource, ResourceHealth,
@@ -56,7 +62,7 @@ pub use model::{
 /// Installation operation journaling and rollback plan primitives.
 pub use operation::OperationPlan;
 /// Filesystem location helpers and scope helpers.
-pub use paths::{ManagerPaths, ProjectRoot};
+pub use paths::{ManagerPaths, ProjectRoot, normalize_path_key, validate_path};
 /// Plugin/resource indexing types and marketplace/resource management functions.
 pub use resource::{
     MarketplaceDocument, MarketplaceEntry, MarketplaceSearchEntry, MarketplaceSearchProvider,

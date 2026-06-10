@@ -6,13 +6,13 @@
 
 use iced::{
     Alignment, Element, Length,
-    widget::{checkbox, column, row, scrollable, text},
+    widget::{checkbox, column, container, row, scrollable, text, text_editor},
 };
 use skills_manager_core::{SkillScaffoldPreview, format_bytes};
 
 use crate::theme::*;
 use crate::{
-    app::{App, Message, UiScope},
+    app::{App, ExpandedEditorTarget, Message, UiScope},
     components, icons,
 };
 
@@ -28,19 +28,21 @@ pub fn view(app: &App) -> Element<'_, Message> {
     let form = components::card(scrollable(
         column![
             components::section_header("New Skill", "Scaffold a SKILL.md for a target"),
-            components::field(
+            components::expandable_field(
                 "Name",
                 "Lowercase, numbers, hyphens, or underscores.",
                 "my-skill",
                 &app.create.name,
                 Message::CreateNameChanged,
+                ExpandedEditorTarget::CreateName,
             ),
-            components::field(
+            components::expandable_field(
                 "Description",
                 "What the skill does and when to use it.",
                 "Use this skill when...",
                 &app.create.description,
                 Message::CreateDescriptionChanged,
+                ExpandedEditorTarget::CreateDescription,
             ),
             target_controls(app),
             advanced_section(app),
@@ -57,17 +59,59 @@ pub fn view(app: &App) -> Element<'_, Message> {
     .width(Length::FillPortion(2))
     .height(Length::Fill);
 
-    let preview = components::card(
+    let preview = editor_or_preview_panel(app)
+        .width(Length::FillPortion(3))
+        .height(Length::Fill);
+
+    components::form_preview_layout(form, preview)
+}
+
+fn editor_or_preview_panel(app: &App) -> iced::widget::Container<'_, Message> {
+    if let Some(target) = app.form_editor.active.filter(|target| target.is_create()) {
+        return expanded_editor_panel(app, target);
+    }
+
+    components::card(
         column![
             components::section_header("Preview", preview_meta(app.create.preview.as_ref())),
             scrollable(preview_body(app.create.preview.as_ref())).height(Length::Fill),
         ]
         .spacing(SPACING_MD),
     )
-    .width(Length::FillPortion(3))
-    .height(Length::Fill);
+}
 
-    components::form_preview_layout(form, preview)
+fn expanded_editor_panel(
+    app: &App,
+    target: ExpandedEditorTarget,
+) -> iced::widget::Container<'_, Message> {
+    components::card(
+        column![
+            row![
+                column![
+                    text(target.label()).size(FONT_BODY).color(TEXT),
+                    text(target.helper())
+                        .size(FONT_MICRO)
+                        .color(TEXT_MUTED)
+                        .wrapping(text::Wrapping::WordOrGlyph),
+                ]
+                .spacing(SPACING_XS)
+                .width(Length::Fill),
+                components::secondary_button("Done", None).on_press(Message::CloseExpandedEditor),
+            ]
+            .spacing(SPACING_MD)
+            .align_y(Alignment::Center),
+            container(
+                text_editor(&app.form_editor.content)
+                    .placeholder(target.placeholder())
+                    .on_action(Message::ExpandedEditorAction)
+                    .padding(SPACING_MD)
+                    .height(Length::Fill),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill),
+        ]
+        .spacing(SPACING_MD),
+    )
 }
 
 fn target_controls(app: &App) -> Element<'_, Message> {
@@ -83,11 +127,13 @@ fn target_controls(app: &App) -> Element<'_, Message> {
     .spacing(SPACING_XS + 2.0);
 
     if app.create.target == UiScope::Custom {
-        controls = controls.push(components::compact_field(
+        controls = controls.push(components::expandable_field(
             "Custom root",
-            "/path/to/skills/root",
+            "",
+            "path/to/skills/root",
             &app.create.custom_path,
             Message::CreateCustomPathChanged,
+            ExpandedEditorTarget::CreateCustomPath,
         ));
     }
 
@@ -119,40 +165,47 @@ fn target_controls(app: &App) -> Element<'_, Message> {
 fn advanced_section(app: &App) -> Element<'_, Message> {
     column![
         components::section_label("ADVANCED OPTIONS"),
-        components::field(
+        components::expandable_field(
             "Tags",
             "Comma-separated discovery tags.",
             "analysis,docs,automation",
             &app.create.tags,
             Message::CreateTagsChanged,
+            ExpandedEditorTarget::CreateTags,
         ),
-        components::field(
+        components::expandable_field(
             "Allowed tools",
             "Comma-separated tools.",
             "shell,browser",
             &app.create.allowed_tools,
             Message::CreateAllowedToolsChanged,
+            ExpandedEditorTarget::CreateAllowedTools,
         ),
-        components::field(
+        components::expandable_field(
             "When to use",
             "Claude Code trigger guidance.",
             "Use when the user asks to...",
             &app.create.when_to_use,
             Message::CreateWhenToUseChanged,
+            ExpandedEditorTarget::CreateWhenToUse,
         ),
         row![
-            iced::widget::container(components::compact_field(
+            iced::widget::container(components::expandable_field(
                 "Compatibility",
-                "Claude Code, Codex, Zed",
+                "",
+                "Claude Code, Codex, Droid, OpenCode, Zed",
                 &app.create.compatibility,
                 Message::CreateCompatibilityChanged,
+                ExpandedEditorTarget::CreateCompatibility,
             ))
             .width(Length::FillPortion(1)),
-            iced::widget::container(components::compact_field(
+            iced::widget::container(components::expandable_field(
                 "License",
+                "",
                 "MIT",
                 &app.create.license,
                 Message::CreateLicenseChanged,
+                ExpandedEditorTarget::CreateLicense,
             ))
             .width(Length::FillPortion(1)),
         ]

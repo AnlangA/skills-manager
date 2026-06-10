@@ -8,6 +8,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
     fmt, fs,
+    io::ErrorKind,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -367,6 +368,7 @@ impl ResourceManager {
     pub fn scan_resources(&self) -> Result<Vec<ManagedResource>> {
         let mut resources = scan_installed_skills_as_resources(&self.paths)?;
         resources.extend(self.scan_plugins()?);
+        resources.extend(crate::scan_mcp_servers(&self.paths)?);
         resources.extend(self.scan_marketplaces()?);
         resources.sort_by(|left, right| {
             left.kind
@@ -455,7 +457,10 @@ impl ResourceManager {
                 .map(|root| match document.target {
                     AgentToolTarget::Codex => root.join(CODEX_MARKETPLACE_FILE),
                     AgentToolTarget::ClaudeCode => root.join(CLAUDE_MARKETPLACE_FILE),
-                    AgentToolTarget::Generic => root.join("marketplace.json"),
+                    AgentToolTarget::Droid
+                    | AgentToolTarget::OpenCode
+                    | AgentToolTarget::Zed
+                    | AgentToolTarget::Generic => root.join("marketplace.json"),
                 });
             resources.push(marketplace_resource(document, file));
         }
@@ -503,7 +508,10 @@ impl ResourceManager {
                 request.conflict_policy,
             )),
             AgentToolTarget::ClaudeCode => None,
-            AgentToolTarget::Generic => None,
+            AgentToolTarget::Droid
+            | AgentToolTarget::OpenCode
+            | AgentToolTarget::Zed
+            | AgentToolTarget::Generic => None,
         };
         let conflict = destination.as_ref().is_some_and(|path| path.exists());
         let mut diagnostics = manifest.diagnostics.clone();
@@ -526,7 +534,10 @@ impl ResourceManager {
                     "Claude Code plugin mutations are delegated to the official `claude plugin` command",
                 ));
             }
-            AgentToolTarget::Generic => diagnostics.push(SkillDiagnostic::invalid(
+            AgentToolTarget::Droid
+            | AgentToolTarget::OpenCode
+            | AgentToolTarget::Zed
+            | AgentToolTarget::Generic => diagnostics.push(SkillDiagnostic::invalid(
                 "Generic plugins are read-only until a target adapter is selected",
             )),
         }
@@ -584,9 +595,13 @@ impl ResourceManager {
                     preview.operation_plan.marketplace.as_deref(),
                 ),
             ),
-            AgentToolTarget::Generic => Err(SkillsManagerError::InvalidResource(
-                "generic plugin install is read-only".to_string(),
-            )),
+            AgentToolTarget::Droid
+            | AgentToolTarget::OpenCode
+            | AgentToolTarget::Zed
+            | AgentToolTarget::Generic => Err(SkillsManagerError::InvalidResource(format!(
+                "{} plugin install is read-only",
+                request.target.label()
+            ))),
         }
     }
 
@@ -609,9 +624,13 @@ impl ResourceManager {
                 self.run_claude_plugin_command(action, plugin_id)
                     .map(|_| ())
             }
-            AgentToolTarget::Generic => Err(SkillsManagerError::InvalidResource(
-                "generic plugin enablement is read-only".to_string(),
-            )),
+            AgentToolTarget::Droid
+            | AgentToolTarget::OpenCode
+            | AgentToolTarget::Zed
+            | AgentToolTarget::Generic => Err(SkillsManagerError::InvalidResource(format!(
+                "{} plugin enablement is read-only",
+                target.label()
+            ))),
         }
     }
 
@@ -626,9 +645,13 @@ impl ResourceManager {
             AgentToolTarget::ClaudeCode => self
                 .run_claude_plugin_command("uninstall", plugin_id_or_path)
                 .map(|_| PathBuf::from(plugin_id_or_path)),
-            AgentToolTarget::Generic => Err(SkillsManagerError::InvalidResource(
-                "generic plugin removal is read-only".to_string(),
-            )),
+            AgentToolTarget::Droid
+            | AgentToolTarget::OpenCode
+            | AgentToolTarget::Zed
+            | AgentToolTarget::Generic => Err(SkillsManagerError::InvalidResource(format!(
+                "{} plugin removal is read-only",
+                target.label()
+            ))),
         }
     }
 
@@ -738,22 +761,59 @@ impl ResourceManager {
             .arg(plugin_id)
             .output()
             .map_err(|error| {
+                if error.kind() == ErrorKind::NotFound {
+                    return SkillsManagerError::InvalidResource(
+                        "`claude` command was not found. Install Claude Code CLI and ensure it is in PATH."
+                            .to_string(),
+                    );
+                }
+
                 SkillsManagerError::InvalidResource(format!(
                     "failed to run `claude plugin {action} {plugin_id}`: {error}"
                 ))
             })?;
 
         if !output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let mut details = String::new();
+            if !stdout.is_empty() {
+                details.push_str(&stdout);
+            }
+            if !stderr.is_empty() {
+                if !details.is_empty() {
+                    details.push('\n');
+                }
+                details.push_str(&stderr);
+            }
+
             return Err(SkillsManagerError::InvalidResource(format!(
                 "`claude plugin {action} {plugin_id}` failed: {}",
-                String::from_utf8_lossy(&output.stderr)
+                if details.is_empty() {
+                    "no output".to_string()
+                } else {
+                    details
+                }
             )));
+        }
+
+        let mut output_text = String::new();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if !stdout.is_empty() {
+            output_text.push_str(&stdout);
+            if !stderr.is_empty() {
+                output_text.push('\n');
+            }
+        }
+        if !stderr.is_empty() {
+            output_text.push_str(&stderr);
         }
 
         Ok(PluginInstallResult {
             installed: None,
             backup: None,
-            command_output: Some(String::from_utf8_lossy(&output.stdout).to_string()),
+            command_output: Some(output_text),
         })
     }
 }
@@ -910,6 +970,9 @@ fn skill_resource(skill: InstalledSkill) -> ManagedResource {
         target: match skill.scope {
             crate::SkillScope::Codex => AgentToolTarget::Codex,
             crate::SkillScope::ClaudeCode => AgentToolTarget::ClaudeCode,
+            crate::SkillScope::Droid => AgentToolTarget::Droid,
+            crate::SkillScope::OpenCode => AgentToolTarget::OpenCode,
+            crate::SkillScope::Zed => AgentToolTarget::Zed,
             _ => AgentToolTarget::Generic,
         },
         display_name: skill.display_name.clone(),
@@ -1021,7 +1084,10 @@ fn read_plugin_manifest_for_target(root: &Path, target: AgentToolTarget) -> Resu
     match target {
         AgentToolTarget::Codex => read_plugin_manifest_at(root, AgentToolTarget::Codex),
         AgentToolTarget::ClaudeCode => read_plugin_manifest_at(root, AgentToolTarget::ClaudeCode),
-        AgentToolTarget::Generic => read_plugin_manifest(root),
+        AgentToolTarget::Droid
+        | AgentToolTarget::OpenCode
+        | AgentToolTarget::Zed
+        | AgentToolTarget::Generic => read_plugin_manifest(root),
     }
 }
 
@@ -1029,7 +1095,10 @@ fn read_plugin_manifest_at(root: &Path, target: AgentToolTarget) -> Result<Plugi
     let manifest_file = root.join(match target {
         AgentToolTarget::Codex => CODEX_PLUGIN_MANIFEST,
         AgentToolTarget::ClaudeCode => CLAUDE_PLUGIN_MANIFEST,
-        AgentToolTarget::Generic => "plugin.json",
+        AgentToolTarget::Droid
+        | AgentToolTarget::OpenCode
+        | AgentToolTarget::Zed
+        | AgentToolTarget::Generic => "plugin.json",
     });
     if !manifest_file.exists() {
         return Err(SkillsManagerError::MissingPluginManifest(
@@ -1568,6 +1637,9 @@ fn target_from_config(value: Option<&str>) -> AgentToolTarget {
     match value {
         Some("codex") => AgentToolTarget::Codex,
         Some("claude-code") | Some("claude") => AgentToolTarget::ClaudeCode,
+        Some("droid") => AgentToolTarget::Droid,
+        Some("opencode") | Some("open-code") => AgentToolTarget::OpenCode,
+        Some("zed") => AgentToolTarget::Zed,
         _ => AgentToolTarget::Generic,
     }
 }

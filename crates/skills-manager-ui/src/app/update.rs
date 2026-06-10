@@ -3,7 +3,7 @@
 //! Contains the [`App`] struct definition, its initialization methods,
 //! and the main `update` function that processes [`Message`] variants.
 
-use iced::Task;
+use iced::{Task, widget::text_editor};
 
 use super::derived::*;
 use super::helpers::*;
@@ -20,6 +20,8 @@ pub struct App {
     pub derived: DerivedInventoryState,
     pub active_view: ActiveView,
     pub inventory: InventoryState,
+    pub mcp: McpState,
+    pub form_editor: ExpandedEditorState,
     pub install: InstallState,
     pub create: CreateState,
     pub catalog: CatalogExportState,
@@ -43,6 +45,8 @@ impl App {
             derived: DerivedInventoryState::default(),
             active_view: ActiveView::Library,
             inventory: InventoryState::default(),
+            mcp: McpState::default(),
+            form_editor: ExpandedEditorState::default(),
             install: InstallState::default(),
             create: CreateState::default(),
             catalog: CatalogExportState::default(),
@@ -219,8 +223,28 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             app.inventory.marketplace_search_query = value;
             Task::none()
         }
+        Message::McpSearchChanged(value) => {
+            app.mcp.search_query = value;
+            Task::none()
+        }
         Message::ActiveViewSelected(view) => {
             app.active_view = view;
+            Task::none()
+        }
+        Message::OpenExpandedEditor(target) => {
+            open_expanded_editor(app, target);
+            Task::none()
+        }
+        Message::CloseExpandedEditor => {
+            app.form_editor.active = None;
+            Task::none()
+        }
+        Message::ExpandedEditorAction(action) => {
+            app.form_editor.content.perform(action);
+            if let Some(target) = app.form_editor.active {
+                let value = app.form_editor.content.text();
+                set_expanded_editor_value(app, target, value);
+            }
             Task::none()
         }
         Message::ScopeFilterSelected(scope_filter) => {
@@ -245,6 +269,14 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             app.inventory.plugin_target_filter = target_filter;
             Task::none()
         }
+        Message::McpTargetFilterSelected(target_filter) => {
+            app.mcp.target_filter = target_filter;
+            Task::none()
+        }
+        Message::McpHealthFilterSelected(health_filter) => {
+            app.mcp.health_filter = health_filter;
+            Task::none()
+        }
         Message::SortSelected(sort_key) => {
             app.inventory.sort_key = sort_key;
             app.rebuild_derived();
@@ -266,14 +298,17 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::SourceUrlChanged(value) => {
             app.install.source_url = value;
+            sync_expanded_editor(app, ExpandedEditorTarget::InstallSourceUrl);
             Task::none()
         }
         Message::LocalSourcePathChanged(value) => {
             app.install.local_source_path = value;
+            sync_expanded_editor(app, ExpandedEditorTarget::InstallLocalSourcePath);
             Task::none()
         }
         Message::CatalogUrlChanged(value) => {
             app.install.catalog_url = value;
+            sync_expanded_editor(app, ExpandedEditorTarget::InstallCatalogUrl);
             Task::none()
         }
         Message::DefaultDownloadPathChanged(value) => {
@@ -295,6 +330,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::DownloadPathOverrideChanged(value) => {
             app.install.download_path_override = value;
+            sync_expanded_editor(app, ExpandedEditorTarget::InstallDownloadPathOverride);
             Task::none()
         }
         Message::InstallScopeSelected(scope) => {
@@ -305,6 +341,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::CustomInstallPathChanged(value) => {
             app.install.custom_install_path = value;
             app.install.preview = None;
+            sync_expanded_editor(app, ExpandedEditorTarget::InstallCustomPath);
             Task::none()
         }
         Message::EnableAfterInstallChanged(value) => {
@@ -601,6 +638,110 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             app.status = result.unwrap_or_else(|error| error);
             tasks::load_workspace_task(app.settings.project_path.clone())
         }
+        Message::McpNameChanged(value) => {
+            app.mcp.name = value;
+            sync_expanded_editor(app, ExpandedEditorTarget::McpName);
+            Task::none()
+        }
+        Message::McpTargetSelected(value) => {
+            app.mcp.target = value;
+            Task::none()
+        }
+        Message::McpTransportSelected(value) => {
+            app.mcp.transport = value;
+            Task::none()
+        }
+        Message::McpCommandChanged(value) => {
+            app.mcp.command = value;
+            sync_expanded_editor(app, ExpandedEditorTarget::McpCommand);
+            Task::none()
+        }
+        Message::McpArgsChanged(value) => {
+            app.mcp.args = value;
+            sync_expanded_editor(app, ExpandedEditorTarget::McpArgs);
+            Task::none()
+        }
+        Message::McpEnvChanged(value) => {
+            app.mcp.env = value;
+            sync_expanded_editor(app, ExpandedEditorTarget::McpEnv);
+            Task::none()
+        }
+        Message::McpUrlChanged(value) => {
+            app.mcp.url = value;
+            sync_expanded_editor(app, ExpandedEditorTarget::McpUrl);
+            Task::none()
+        }
+        Message::McpHeadersChanged(value) => {
+            app.mcp.headers = value;
+            sync_expanded_editor(app, ExpandedEditorTarget::McpHeaders);
+            Task::none()
+        }
+        Message::McpEnabledChanged(value) => {
+            app.mcp.enabled = value;
+            Task::none()
+        }
+        Message::AddMcpServer => {
+            let request = match current_mcp_request(&app.mcp) {
+                Ok(request) => request,
+                Err(error) => {
+                    app.status = error;
+                    return Task::none();
+                }
+            };
+            app.busy = true;
+            app.status = "Adding MCP server...".to_string();
+            tasks::add_mcp_server_task(app.settings.project_path.clone(), request)
+        }
+        Message::McpServerAdded(result) => {
+            app.busy = false;
+            match result {
+                Ok(message) => {
+                    app.status = message;
+                    app.form_editor.active = None;
+                    app.mcp.name.clear();
+                    app.mcp.command.clear();
+                    app.mcp.args.clear();
+                    app.mcp.env.clear();
+                    app.mcp.url.clear();
+                    app.mcp.headers.clear();
+                }
+                Err(error) => app.status = error,
+            }
+            tasks::load_workspace_task(app.settings.project_path.clone())
+        }
+        Message::SetMcpServerEnabled(name, target, enabled) => {
+            app.busy = true;
+            app.mcp.pending_remove = None;
+            app.status = if enabled {
+                "Enabling MCP server...".to_string()
+            } else {
+                "Disabling MCP server...".to_string()
+            };
+            tasks::toggle_mcp_server_task(app.settings.project_path.clone(), name, target, enabled)
+        }
+        Message::McpServerToggled(result) => {
+            app.busy = false;
+            app.status = result.unwrap_or_else(|error| error);
+            tasks::load_workspace_task(app.settings.project_path.clone())
+        }
+        Message::RequestRemoveMcpServer(id) => {
+            app.mcp.pending_remove = Some(id.clone());
+            app.inventory.selected_resource_id = Some(id);
+            app.status = "Press Confirm remove to remove the MCP server entry.".to_string();
+            Task::none()
+        }
+        Message::ConfirmRemoveMcpServer(name, target) => {
+            app.busy = true;
+            app.mcp.pending_remove = None;
+            app.inventory.selected_resource_id = None;
+            app.status = "Removing MCP server...".to_string();
+            tasks::remove_mcp_server_task(app.settings.project_path.clone(), name, target)
+        }
+        Message::McpServerRemoved(result) => {
+            app.busy = false;
+            app.status = result.unwrap_or_else(|error| error);
+            tasks::load_workspace_task(app.settings.project_path.clone())
+        }
         Message::PreviewDownloaded(root_dir) => {
             let target = match current_install_target(&app.install) {
                 Ok(target) => target,
@@ -643,11 +784,13 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::CreateNameChanged(value) => {
             app.create.name = value;
             app.create.preview = None;
+            sync_expanded_editor(app, ExpandedEditorTarget::CreateName);
             Task::none()
         }
         Message::CreateDescriptionChanged(value) => {
             app.create.description = value;
             app.create.preview = None;
+            sync_expanded_editor(app, ExpandedEditorTarget::CreateDescription);
             Task::none()
         }
         Message::CreateTargetSelected(target) => {
@@ -658,31 +801,37 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::CreateCustomPathChanged(value) => {
             app.create.custom_path = value;
             app.create.preview = None;
+            sync_expanded_editor(app, ExpandedEditorTarget::CreateCustomPath);
             Task::none()
         }
         Message::CreateTagsChanged(value) => {
             app.create.tags = value;
             app.create.preview = None;
+            sync_expanded_editor(app, ExpandedEditorTarget::CreateTags);
             Task::none()
         }
         Message::CreateAllowedToolsChanged(value) => {
             app.create.allowed_tools = value;
             app.create.preview = None;
+            sync_expanded_editor(app, ExpandedEditorTarget::CreateAllowedTools);
             Task::none()
         }
         Message::CreateCompatibilityChanged(value) => {
             app.create.compatibility = value;
             app.create.preview = None;
+            sync_expanded_editor(app, ExpandedEditorTarget::CreateCompatibility);
             Task::none()
         }
         Message::CreateLicenseChanged(value) => {
             app.create.license = value;
             app.create.preview = None;
+            sync_expanded_editor(app, ExpandedEditorTarget::CreateLicense);
             Task::none()
         }
         Message::CreateWhenToUseChanged(value) => {
             app.create.when_to_use = value;
             app.create.preview = None;
+            sync_expanded_editor(app, ExpandedEditorTarget::CreateWhenToUse);
             Task::none()
         }
         Message::CreateDisableModelInvocationChanged(value) => {
@@ -745,6 +894,104 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             tasks::load_workspace_task(app.settings.project_path.clone())
         }
         Message::SmokeExit => iced::exit(),
+    }
+}
+
+fn open_expanded_editor(app: &mut App, target: ExpandedEditorTarget) {
+    let value = expanded_editor_value(app, target);
+    app.form_editor.active = Some(target);
+    app.form_editor.content = text_editor::Content::with_text(&value);
+}
+
+fn sync_expanded_editor(app: &mut App, target: ExpandedEditorTarget) {
+    if app.form_editor.active == Some(target) {
+        let value = expanded_editor_value(app, target);
+        app.form_editor.content = text_editor::Content::with_text(&value);
+    }
+}
+
+fn expanded_editor_value(app: &App, target: ExpandedEditorTarget) -> String {
+    match target {
+        ExpandedEditorTarget::InstallSourceUrl => app.install.source_url.clone(),
+        ExpandedEditorTarget::InstallLocalSourcePath => app.install.local_source_path.clone(),
+        ExpandedEditorTarget::InstallCatalogUrl => app.install.catalog_url.clone(),
+        ExpandedEditorTarget::InstallDownloadPathOverride => {
+            app.install.download_path_override.clone()
+        }
+        ExpandedEditorTarget::InstallCustomPath => app.install.custom_install_path.clone(),
+        ExpandedEditorTarget::McpName => app.mcp.name.clone(),
+        ExpandedEditorTarget::McpCommand => app.mcp.command.clone(),
+        ExpandedEditorTarget::McpArgs => app.mcp.args.clone(),
+        ExpandedEditorTarget::McpEnv => app.mcp.env.clone(),
+        ExpandedEditorTarget::McpUrl => app.mcp.url.clone(),
+        ExpandedEditorTarget::McpHeaders => app.mcp.headers.clone(),
+        ExpandedEditorTarget::CreateName => app.create.name.clone(),
+        ExpandedEditorTarget::CreateDescription => app.create.description.clone(),
+        ExpandedEditorTarget::CreateCustomPath => app.create.custom_path.clone(),
+        ExpandedEditorTarget::CreateTags => app.create.tags.clone(),
+        ExpandedEditorTarget::CreateAllowedTools => app.create.allowed_tools.clone(),
+        ExpandedEditorTarget::CreateCompatibility => app.create.compatibility.clone(),
+        ExpandedEditorTarget::CreateLicense => app.create.license.clone(),
+        ExpandedEditorTarget::CreateWhenToUse => app.create.when_to_use.clone(),
+    }
+}
+
+fn set_expanded_editor_value(app: &mut App, target: ExpandedEditorTarget, value: String) {
+    match target {
+        ExpandedEditorTarget::InstallSourceUrl => {
+            app.install.source_url = value;
+            app.install.preview = None;
+        }
+        ExpandedEditorTarget::InstallLocalSourcePath => {
+            app.install.local_source_path = value;
+            app.install.preview = None;
+        }
+        ExpandedEditorTarget::InstallCatalogUrl => app.install.catalog_url = value,
+        ExpandedEditorTarget::InstallDownloadPathOverride => {
+            app.install.download_path_override = value;
+        }
+        ExpandedEditorTarget::InstallCustomPath => {
+            app.install.custom_install_path = value;
+            app.install.preview = None;
+        }
+        ExpandedEditorTarget::McpName => app.mcp.name = value,
+        ExpandedEditorTarget::McpCommand => app.mcp.command = value,
+        ExpandedEditorTarget::McpArgs => app.mcp.args = value,
+        ExpandedEditorTarget::McpEnv => app.mcp.env = value,
+        ExpandedEditorTarget::McpUrl => app.mcp.url = value,
+        ExpandedEditorTarget::McpHeaders => app.mcp.headers = value,
+        ExpandedEditorTarget::CreateName => {
+            app.create.name = value;
+            app.create.preview = None;
+        }
+        ExpandedEditorTarget::CreateDescription => {
+            app.create.description = value;
+            app.create.preview = None;
+        }
+        ExpandedEditorTarget::CreateCustomPath => {
+            app.create.custom_path = value;
+            app.create.preview = None;
+        }
+        ExpandedEditorTarget::CreateTags => {
+            app.create.tags = value;
+            app.create.preview = None;
+        }
+        ExpandedEditorTarget::CreateAllowedTools => {
+            app.create.allowed_tools = value;
+            app.create.preview = None;
+        }
+        ExpandedEditorTarget::CreateCompatibility => {
+            app.create.compatibility = value;
+            app.create.preview = None;
+        }
+        ExpandedEditorTarget::CreateLicense => {
+            app.create.license = value;
+            app.create.preview = None;
+        }
+        ExpandedEditorTarget::CreateWhenToUse => {
+            app.create.when_to_use = value;
+            app.create.preview = None;
+        }
     }
 }
 

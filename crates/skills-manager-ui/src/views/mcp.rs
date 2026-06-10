@@ -1,8 +1,7 @@
-//! Plugin management view with target-grouped list and inspector panel.
+//! MCP server management view.
 //!
-//! Renders installed plugins grouped by agent target (Codex, Claude Code,
-//! Generic), with filter and sort controls, enable/disable toggles,
-//! removal actions, and a detail inspector showing manifest metadata.
+//! Renders installed MCP servers grouped by agent target, with filters,
+//! enable/disable controls, removal confirmation, and an inspector.
 
 use iced::{
     Alignment, Element, Length,
@@ -14,69 +13,61 @@ use skills_manager_core::{
 
 use crate::theme::*;
 use crate::{
-    app::{App, HealthFilter, Message, PluginTargetFilter, SortKey, filtered_plugin_indices},
+    app::{App, HealthFilter, Message, PluginTargetFilter, SortKey, filtered_mcp_indices},
     components, icons, theme,
 };
 
-const TARGET_ORDER: [AgentToolTarget; 3] = [
+const TARGET_ORDER: [AgentToolTarget; 5] = [
     AgentToolTarget::Codex,
     AgentToolTarget::ClaudeCode,
-    AgentToolTarget::Generic,
+    AgentToolTarget::Droid,
+    AgentToolTarget::OpenCode,
+    AgentToolTarget::Zed,
 ];
 
 pub fn view(app: &App) -> Element<'_, Message> {
-    let plugins = filtered_plugins(app);
-    let selected = selected_plugin(app, &plugins);
+    let servers = filtered_mcp_servers(app);
+    let selected = selected_mcp_server(app, &servers);
 
-    let filters = filter_bar(app);
-
-    let list = components::card(
+    let left = components::card(
         column![
-            filters,
+            filter_bar(app),
             table_header(app),
-            scrollable(plugin_list(app, &plugins)).height(Length::Fill),
+            scrollable(mcp_list(app, &servers)).height(Length::Fill),
         ]
         .spacing(SPACING_MD),
     )
     .width(Length::FillPortion(3))
     .height(Length::Fill);
 
-    let inspector = plugin_inspector(
-        selected,
-        app.inventory.pending_remove_plugin.as_ref(),
-        app.busy,
-    )
-    .width(Length::FillPortion(2))
-    .height(Length::Fill);
+    let inspector = mcp_inspector(selected, app.mcp.pending_remove.as_ref(), app.busy)
+        .width(Length::FillPortion(2))
+        .height(Length::Fill);
 
-    column![
-        row![list, inspector]
-            .spacing(SPACING_LG)
-            .height(Length::Fill)
-    ]
-    .spacing(SPACING_MD)
-    .height(Length::Fill)
-    .into()
+    row![left, inspector]
+        .spacing(SPACING_LG)
+        .height(Length::Fill)
+        .into()
 }
 
 fn filter_bar(app: &App) -> Element<'_, Message> {
     row![
-        text_input("Filter plugins...", &app.inventory.plugin_search_query)
-            .on_input(Message::PluginSearchChanged)
+        text_input("Filter MCP servers...", &app.mcp.search_query)
+            .on_input(Message::McpSearchChanged)
             .padding([SPACING_SM, SPACING_MD])
             .style(theme::input)
             .width(Length::FillPortion(2)),
         container(components::styled_pick_list(
             &PluginTargetFilter::ALL,
-            Some(app.inventory.plugin_target_filter),
-            Message::PluginTargetFilterSelected,
+            Some(app.mcp.target_filter),
+            Message::McpTargetFilterSelected,
             Length::Fill,
         ))
         .width(Length::FillPortion(1)),
         container(components::styled_pick_list(
             &HealthFilter::ALL,
-            Some(app.inventory.health_filter),
-            Message::HealthFilterSelected,
+            Some(app.mcp.health_filter),
+            Message::McpHealthFilterSelected,
             Length::Fill,
         ))
         .width(Length::FillPortion(1)),
@@ -90,7 +81,7 @@ fn table_header(app: &App) -> Element<'_, Message> {
     components::flat_card(
         row![
             text("").width(Length::Fixed(24.0)),
-            sort_header("Plugin", SortKey::Name, app.inventory.sort_key).width(Length::Fill),
+            sort_header("Server", SortKey::Name, app.inventory.sort_key).width(Length::Fill),
             sort_header("Health", SortKey::Health, app.inventory.sort_key),
             text("Actions").size(FONT_MICRO).color(TEXT_MUTED),
         ]
@@ -119,13 +110,13 @@ fn sort_header<'a>(
     .on_press(Message::SortSelected(key))
 }
 
-fn filtered_plugins(app: &App) -> Vec<&ManagedResource> {
-    filtered_plugin_indices(
+fn filtered_mcp_servers(app: &App) -> Vec<&ManagedResource> {
+    filtered_mcp_indices(
         &app.resources,
         &app.derived.resource_search,
-        &app.inventory.plugin_search_query,
-        app.inventory.plugin_target_filter,
-        app.inventory.health_filter,
+        &app.mcp.search_query,
+        app.mcp.target_filter,
+        app.mcp.health_filter,
         app.inventory.sort_key,
     )
     .into_iter()
@@ -133,37 +124,36 @@ fn filtered_plugins(app: &App) -> Vec<&ManagedResource> {
     .collect()
 }
 
-fn plugin_list<'a>(app: &'a App, plugins: &[&'a ManagedResource]) -> Element<'a, Message> {
-    if plugins.is_empty() {
+fn mcp_list<'a>(app: &'a App, servers: &[&'a ManagedResource]) -> Element<'a, Message> {
+    if servers.is_empty() {
         return components::empty_state(
-            "No plugins found",
-            "Try adjusting your search or filters, or add plugin marketplaces.",
+            "No MCP servers found",
+            "Install an MCP server from the Install page or adjust the active filters.",
         )
         .into();
     }
 
-    let targets = active_targets(plugins);
-    components::list_column(targets, SPACING_LG, |target| {
-        let scoped: Vec<&ManagedResource> = plugins
+    components::list_column(active_targets(servers), SPACING_LG, |target| {
+        let scoped = servers
             .iter()
             .copied()
-            .filter(|p| p.target == target)
-            .collect();
+            .filter(|server| server.target == target)
+            .collect::<Vec<_>>();
         target_section(app, target, scoped)
     })
     .into()
 }
 
-fn active_targets(plugins: &[&ManagedResource]) -> Vec<AgentToolTarget> {
+fn active_targets(servers: &[&ManagedResource]) -> Vec<AgentToolTarget> {
     let mut targets = Vec::new();
     for target in TARGET_ORDER {
-        if plugins.iter().any(|p| p.target == target) {
+        if servers.iter().any(|server| server.target == target) {
             targets.push(target);
         }
     }
-    for plugin in plugins {
-        if !targets.contains(&plugin.target) {
-            targets.push(plugin.target);
+    for server in servers {
+        if !targets.contains(&server.target) {
+            targets.push(server.target);
         }
     }
     targets
@@ -172,27 +162,27 @@ fn active_targets(plugins: &[&ManagedResource]) -> Vec<AgentToolTarget> {
 fn target_section<'a>(
     app: &'a App,
     target: AgentToolTarget,
-    plugins: Vec<&'a ManagedResource>,
+    servers: Vec<&'a ManagedResource>,
 ) -> Element<'a, Message> {
-    let count = plugins.len();
-    let rows = components::list_column(plugins, SPACING_SM, |plugin| {
+    let count = servers.len();
+    let rows = components::list_column(servers, SPACING_SM, |server| {
         let selected = app
             .inventory
             .selected_resource_id
             .as_ref()
-            .is_some_and(|id| id == &plugin.id);
+            .is_some_and(|id| id == &server.id);
         let pending = app
-            .inventory
-            .pending_remove_plugin
+            .mcp
+            .pending_remove
             .as_ref()
-            .is_some_and(|id| id == &plugin.id);
-        plugin_row(plugin, selected, pending, app.busy)
+            .is_some_and(|id| id == &server.id);
+        mcp_row(server, selected, pending, app.busy)
     });
 
     column![
         row![
             target_chip(target),
-            text(format!("{} plugin(s)", count))
+            text(format!("{} server(s)", count))
                 .size(FONT_CAPTION)
                 .color(TEXT_MUTED),
         ]
@@ -204,29 +194,29 @@ fn target_section<'a>(
     .into()
 }
 
-fn plugin_row<'a>(
-    plugin: &'a ManagedResource,
+fn mcp_row<'a>(
+    server: &'a ManagedResource,
     selected: bool,
     pending: bool,
     busy: bool,
 ) -> Element<'a, Message> {
-    let enabled = plugin.enablement.is_enabled();
+    let enabled = server.enablement.is_enabled();
+    let name = server.display_name.clone();
+    let toggle_target = server.target;
     let toggle = checkbox(enabled)
         .size(18)
-        .on_toggle_maybe((!busy).then_some({
-            let id = plugin_plugin_id(plugin);
-            let target = plugin.target;
-            move |checked| Message::SetPluginEnabled(id.clone(), target, checked)
+        .on_toggle_maybe((!busy).then_some(move |checked| {
+            Message::SetMcpServerEnabled(name.clone(), toggle_target, checked)
         }));
     let select = components::small_ghost_button("View", Some(icons::EYE))
-        .on_press(Message::SelectResource(plugin.id.clone()));
+        .on_press(Message::SelectResource(server.id.clone()));
     let remove = components::confirm_button(
         pending,
         "Remove",
         "Confirm",
         Some(icons::TRASH),
-        Message::RequestRemovePlugin(plugin.id.clone(), plugin.target),
-        Message::ConfirmRemovePlugin(plugin.id.clone(), plugin.target),
+        Message::RequestRemoveMcpServer(server.id.clone()),
+        Message::ConfirmRemoveMcpServer(server.display_name.clone(), server.target),
         busy,
     );
 
@@ -234,11 +224,19 @@ fn plugin_row<'a>(
         row![
             toggle,
             column![
-                text(&plugin.display_name).size(FONT_BODY).color(TEXT),
+                text(&server.display_name).size(FONT_BODY).color(TEXT),
                 text(format!(
                     "{} - {}",
-                    plugin.target.label(),
-                    plugin.root_dir.display()
+                    server
+                        .metadata
+                        .get("transport")
+                        .cloned()
+                        .unwrap_or_else(|| "mcp".to_string()),
+                    server
+                        .manifest_file
+                        .as_ref()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_else(|| "unknown config".to_string())
                 ))
                 .size(FONT_MICRO)
                 .color(TEXT_MUTED)
@@ -246,7 +244,7 @@ fn plugin_row<'a>(
             ]
             .spacing(SPACING_XS)
             .width(Length::Fill),
-            resource_health_dot(plugin.health),
+            resource_health_dot(server.health),
             row![select, remove]
                 .spacing(SPACING_SM)
                 .align_y(Alignment::Center),
@@ -263,30 +261,27 @@ fn plugin_row<'a>(
     .into()
 }
 
-fn plugin_inspector<'a>(
-    plugin: Option<&'a ManagedResource>,
-    pending_remove_plugin: Option<&'a String>,
+fn mcp_inspector<'a>(
+    server: Option<&'a ManagedResource>,
+    pending_remove: Option<&'a String>,
     busy: bool,
 ) -> iced::widget::Container<'a, Message> {
-    match plugin {
-        Some(plugin) => components::card(
+    match server {
+        Some(server) => components::card(
             scrollable(
                 column![
                     row![
-                        target_chip(plugin.target),
-                        components::enablement_chip(plugin.enablement),
-                        resource_health_dot(plugin.health),
+                        target_chip(server.target),
+                        components::enablement_chip(server.enablement),
+                        resource_health_dot(server.health),
                     ]
                     .spacing(SPACING_SM)
                     .align_y(Alignment::Center),
-                    text(&plugin.display_name).size(FONT_DISPLAY).color(TEXT),
-                    inspector_section("OVERVIEW", overview_section(plugin)),
-                    inspector_section("COMPONENTS", components_section(plugin)),
-                    inspector_section("DIAGNOSTICS", diagnostics_section(plugin)),
-                    inspector_section(
-                        "ACTIONS",
-                        actions_section(plugin, pending_remove_plugin, busy),
-                    ),
+                    text(&server.display_name).size(FONT_DISPLAY).color(TEXT),
+                    inspector_section("OVERVIEW", overview_section(server)),
+                    inspector_section("CONFIG", config_section(server)),
+                    inspector_section("DIAGNOSTICS", diagnostics_section(server)),
+                    inspector_section("ACTIONS", actions_section(server, pending_remove, busy)),
                 ]
                 .spacing(SPACING_LG),
             )
@@ -296,8 +291,8 @@ fn plugin_inspector<'a>(
             column![
                 components::section_header("Inspector", "No selection"),
                 components::empty_state(
-                    "No plugin selected",
-                    "Select a plugin to inspect manifest details and actions.",
+                    "No MCP server selected",
+                    "Select a server to inspect configuration and actions.",
                 ),
             ]
             .spacing(SPACING_MD),
@@ -311,75 +306,83 @@ fn inspector_section<'a>(label: &'a str, content: Element<'a, Message>) -> Eleme
         .into()
 }
 
-fn overview_section<'a>(plugin: &'a ManagedResource) -> Element<'a, Message> {
+fn overview_section<'a>(server: &'a ManagedResource) -> Element<'a, Message> {
     column![
         components::detail_row(
             "Description",
-            plugin.description.as_deref().unwrap_or("No description"),
+            server.description.as_deref().unwrap_or("No description"),
         ),
-        components::detail_row("Source", plugin.source_url.as_deref().unwrap_or("Unknown"),),
-        components::detail_row("Root", plugin.root_dir.display().to_string()),
+        components::detail_row("Target", server.target.label()),
+        components::detail_row("Enablement", server.enablement.label()),
         components::detail_row(
-            "Manifest",
-            plugin
-                .manifest_file
-                .as_ref()
-                .map(|path| path.display().to_string())
-                .unwrap_or_else(|| "N/A".to_string()),
+            "Source",
+            server.source_url.as_deref().unwrap_or("Local config")
         ),
     ]
     .spacing(SPACING_SM)
     .into()
 }
 
-fn components_section<'a>(plugin: &'a ManagedResource) -> Element<'a, Message> {
-    components::text_lines(
-        plugin
-            .metadata
-            .iter()
-            .map(|(key, value)| format!("{key}: {value}")),
-        "No component metadata",
-        TEXT_SECONDARY,
-        FONT_CAPTION,
-    )
+fn config_section<'a>(server: &'a ManagedResource) -> Element<'a, Message> {
+    column![
+        components::detail_row(
+            "Config file",
+            server
+                .manifest_file
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "Unknown".to_string()),
+        ),
+        components::text_lines(
+            server
+                .metadata
+                .iter()
+                .map(|(key, value)| format!("{key}: {value}")),
+            "No metadata",
+            TEXT_SECONDARY,
+            FONT_CAPTION,
+        ),
+    ]
+    .spacing(SPACING_SM)
+    .into()
 }
 
-fn diagnostics_section<'a>(plugin: &'a ManagedResource) -> Element<'a, Message> {
-    components::diagnostic_lines(&plugin.diagnostics, "No diagnostics")
+fn diagnostics_section<'a>(server: &'a ManagedResource) -> Element<'a, Message> {
+    components::diagnostic_lines(&server.diagnostics, "No diagnostics")
 }
 
 fn actions_section<'a>(
-    plugin: &'a ManagedResource,
-    pending_remove_plugin: Option<&'a String>,
+    server: &'a ManagedResource,
+    pending_remove: Option<&'a String>,
     busy: bool,
 ) -> Element<'a, Message> {
-    let toggle_label = if plugin.enablement.is_enabled() {
+    let toggle_label = if server.enablement.is_enabled() {
         "Disable"
     } else {
         "Enable"
     };
-    let toggle_icon = if plugin.enablement.is_enabled() {
+    let toggle_icon = if server.enablement.is_enabled() {
         icons::EYE_OFF
     } else {
         icons::EYE
     };
-    let pending = pending_remove_plugin.is_some_and(|id| id == &plugin.id);
+    let pending = pending_remove.is_some_and(|id| id == &server.id);
     let remove = components::confirm_button(
         pending,
         "Remove",
         "Confirm remove",
         Some(icons::TRASH),
-        Message::RequestRemovePlugin(plugin.id.clone(), plugin.target),
-        Message::ConfirmRemovePlugin(plugin.id.clone(), plugin.target),
+        Message::RequestRemoveMcpServer(server.id.clone()),
+        Message::ConfirmRemoveMcpServer(server.display_name.clone(), server.target),
         busy,
     );
 
     row![
         components::primary_button(toggle_label, Some(toggle_icon)).on_press_maybe(
-            (!busy).then_some(Message::SetPluginEnabled(
-                plugin_plugin_id(plugin),
-                plugin.target,
-                !plugin.enablement.is_enabled(),
+            (!busy).then_some(Message::SetMcpServerEnabled(
+                server.display_name.clone(),
+                server.target,
+                !server.enablement.is_enabled(),
             ))
         ),
         remove,
@@ -389,23 +392,15 @@ fn actions_section<'a>(
     .into()
 }
 
-fn plugin_plugin_id(plugin: &ManagedResource) -> String {
-    plugin
-        .metadata
-        .get("plugin_id")
-        .cloned()
-        .unwrap_or_else(|| plugin.id.clone())
-}
-
-fn selected_plugin<'a>(
+fn selected_mcp_server<'a>(
     app: &'a App,
-    plugins: &[&'a ManagedResource],
+    servers: &[&'a ManagedResource],
 ) -> Option<&'a ManagedResource> {
     app.inventory
         .selected_resource_id
         .as_ref()
-        .and_then(|id| plugins.iter().copied().find(|plugin| plugin.id == *id))
-        .or_else(|| plugins.first().copied())
+        .and_then(|id| servers.iter().copied().find(|server| server.id == *id))
+        .or_else(|| servers.first().copied())
 }
 
 fn resource_health_dot<'a>(health: ResourceHealth) -> Element<'a, Message> {

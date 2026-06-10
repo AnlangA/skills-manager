@@ -11,7 +11,10 @@ use iced::{
 use skills_manager_core::{SkillDiagnostic, SkillEnablement, SkillHealth, SkillScope};
 
 use crate::theme::*;
-use crate::{app::Message, icons, theme};
+use crate::{
+    app::{ExpandedEditorTarget, Message},
+    icons, theme,
+};
 
 pub fn card<'a>(content: impl Into<Element<'a, Message>>) -> Container<'a, Message> {
     container(content).padding(SPACING_LG).style(theme::card)
@@ -110,6 +113,42 @@ where
 {
     let mut col = column![
         text(label).size(FONT_CAPTION).color(TEXT),
+        text_input(placeholder, value)
+            .on_input(on_input)
+            .padding([SPACING_SM, SPACING_MD])
+            .style(theme::input)
+            .width(Length::Fill),
+    ]
+    .spacing(SPACING_XS + 2.0);
+
+    if !helper.is_empty() {
+        col = col.push(text(helper).size(FONT_MICRO).color(TEXT_MUTED));
+    }
+
+    col.into()
+}
+
+pub fn expandable_field<'a, F>(
+    label: &'a str,
+    helper: &'a str,
+    placeholder: &'a str,
+    value: &'a str,
+    on_input: F,
+    target: ExpandedEditorTarget,
+) -> Element<'a, Message>
+where
+    F: 'a + Fn(String) -> Message,
+{
+    let header = row![
+        text(label).size(FONT_CAPTION).color(TEXT),
+        column![].width(Length::Fill),
+        small_ghost_button("Expand", None).on_press(Message::OpenExpandedEditor(target)),
+    ]
+    .spacing(SPACING_SM)
+    .align_y(Alignment::Center);
+
+    let mut col = column![
+        header,
         text_input(placeholder, value)
             .on_input(on_input)
             .padding([SPACING_SM, SPACING_MD])

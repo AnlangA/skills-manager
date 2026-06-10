@@ -10,14 +10,16 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use skills_manager_core::{
     AgentToolTarget, CatalogFormat, ConflictPolicy, InstallRequest, InstallTarget, Installer,
-    ManagerPaths, MarketplaceSearchProvider, PluginInstallRequest, ProjectRoot, ResourceKind,
-    ResourceManager, SkillHealth, SkillScaffoldRequest, WorkspaceSnapshot, add_marketplace_source,
+    ManagerPaths, MarketplaceSearchProvider, McpServerRequest, McpServerTransport,
+    PluginInstallRequest, ProjectRoot, ResourceKind, ResourceManager, SkillHealth,
+    SkillScaffoldRequest, WorkspaceSnapshot, add_marketplace_source, add_mcp_server,
     create_skill_scaffold, doctor_report, download_github_catalog, download_github_skills,
     download_github_skills_to_cache, export_installed_catalog, inspect_marketplace_source,
     list_downloaded_skills, list_marketplace_sources, preview_skill_scaffold,
     refresh_marketplace_source, remove_downloaded_skills, remove_marketplace_source,
-    repair_targets, scan_installed_plugins, scan_installed_skills, scan_marketplaces,
-    scan_resources, search_marketplace, target_profiles,
+    remove_mcp_server, repair_targets, scan_installed_plugins, scan_installed_skills,
+    scan_marketplaces, scan_mcp_servers, scan_resources, search_marketplace,
+    set_mcp_server_enabled, target_profiles, validate_path,
 };
 use tracing_subscriber::EnvFilter;
 
@@ -166,6 +168,10 @@ enum Command {
         #[command(subcommand)]
         command: PluginCommand,
     },
+    Mcp {
+        #[command(subcommand)]
+        command: McpCommand,
+    },
     Marketplaces {
         #[command(subcommand)]
         command: MarketplaceCommand,
@@ -195,6 +201,7 @@ impl Command {
             Self::Remove { .. } => "remove",
             Self::Resources { .. } => "resources",
             Self::Plugins { .. } => "plugins",
+            Self::Mcp { .. } => "mcp",
             Self::Marketplaces { .. } => "marketplaces",
         }
     }
@@ -254,6 +261,52 @@ enum PluginCommand {
     },
     Remove {
         plugin: String,
+        #[arg(long, value_enum, default_value_t = CliAgentTarget::Codex)]
+        target: CliAgentTarget,
+    },
+}
+
+/// MCP server management subcommands.
+#[derive(Debug, Subcommand)]
+enum McpCommand {
+    /// Scan and list configured MCP servers.
+    Scan {
+        #[arg(long, value_enum)]
+        target: Option<CliAgentTarget>,
+    },
+    /// Add or replace an MCP server entry.
+    Add {
+        name: String,
+        #[arg(long, value_enum, default_value_t = CliAgentTarget::Codex)]
+        target: CliAgentTarget,
+        #[arg(long, conflicts_with = "remote")]
+        local: bool,
+        #[arg(long, value_name = "URL", conflicts_with = "local")]
+        remote: Option<String>,
+        #[arg(long = "env", value_name = "KEY=VALUE")]
+        env: Vec<String>,
+        #[arg(long = "header", value_name = "KEY=VALUE")]
+        headers: Vec<String>,
+        #[arg(long)]
+        disable_after_add: bool,
+        #[arg(last = true)]
+        command: Vec<String>,
+    },
+    /// Enable an MCP server.
+    Enable {
+        name: String,
+        #[arg(long, value_enum, default_value_t = CliAgentTarget::Codex)]
+        target: CliAgentTarget,
+    },
+    /// Disable an MCP server.
+    Disable {
+        name: String,
+        #[arg(long, value_enum, default_value_t = CliAgentTarget::Codex)]
+        target: CliAgentTarget,
+    },
+    /// Remove an MCP server.
+    Remove {
+        name: String,
         #[arg(long, value_enum, default_value_t = CliAgentTarget::Codex)]
         target: CliAgentTarget,
     },
@@ -407,6 +460,8 @@ enum CliResourceKind {
     All,
     Skill,
     Plugin,
+    #[value(name = "mcp-server", alias = "mcp")]
+    McpServer,
     Marketplace,
 }
 
@@ -416,6 +471,7 @@ impl CliResourceKind {
             Self::All => true,
             Self::Skill => kind == ResourceKind::Skill,
             Self::Plugin => kind == ResourceKind::Plugin,
+            Self::McpServer => kind == ResourceKind::McpServer,
             Self::Marketplace => kind == ResourceKind::Marketplace,
         }
     }
@@ -428,6 +484,10 @@ enum CliAgentTarget {
     Codex,
     #[value(name = "claude-code", alias = "claude", alias = "claudecode")]
     ClaudeCode,
+    Droid,
+    #[value(name = "opencode", alias = "open-code")]
+    OpenCode,
+    Zed,
 }
 
 impl From<CliAgentTarget> for AgentToolTarget {
@@ -436,6 +496,9 @@ impl From<CliAgentTarget> for AgentToolTarget {
             CliAgentTarget::Generic => Self::Generic,
             CliAgentTarget::Codex => Self::Codex,
             CliAgentTarget::ClaudeCode => Self::ClaudeCode,
+            CliAgentTarget::Droid => Self::Droid,
+            CliAgentTarget::OpenCode => Self::OpenCode,
+            CliAgentTarget::Zed => Self::Zed,
         }
     }
 }
@@ -627,7 +690,7 @@ async fn run_command(
             let request = SkillScaffoldRequest {
                 name,
                 description,
-                target: install_target(target, None, dest),
+                target: install_target(target, None, dest)?,
                 tags,
                 allowed_tools,
                 compatibility,
@@ -757,6 +820,7 @@ async fn run_command(
         }
         Command::Resources { command } => run_resource_command(command, paths),
         Command::Plugins { command } => run_plugin_command(command, paths).await,
+        Command::Mcp { command } => run_mcp_command(command, paths),
         Command::Marketplaces { command } => run_marketplace_command(command, paths).await,
     }
 }
@@ -766,6 +830,7 @@ fn run_resource_command(command: ResourceCommand, paths: &ManagerPaths) -> Resul
         ResourceCommand::Scan { kind, target } => {
             let mut resources = match kind {
                 CliResourceKind::Plugin => scan_installed_plugins(paths)?,
+                CliResourceKind::McpServer => scan_mcp_servers(paths)?,
                 CliResourceKind::Marketplace => scan_marketplaces(paths)?,
                 _ => scan_resources(paths)?,
             };
@@ -775,6 +840,58 @@ fn run_resource_command(command: ResourceCommand, paths: &ManagerPaths) -> Resul
                 resources.retain(|resource| resource.target == target);
             }
             Ok(CommandOutput::Resources { resources })
+        }
+    }
+}
+
+fn run_mcp_command(command: McpCommand, paths: &ManagerPaths) -> Result<CommandOutput> {
+    match command {
+        McpCommand::Scan { target } => {
+            let mut servers = scan_mcp_servers(paths)?;
+            if let Some(target) = target {
+                let target = AgentToolTarget::from(target);
+                servers.retain(|server| server.target == target);
+            }
+            Ok(CommandOutput::McpServers { servers })
+        }
+        McpCommand::Add {
+            name,
+            target,
+            local,
+            remote,
+            env,
+            headers,
+            disable_after_add,
+            command,
+        } => {
+            let request = mcp_request(
+                name,
+                target.into(),
+                local,
+                remote,
+                env,
+                headers,
+                disable_after_add,
+                command,
+            )?;
+            let server = add_mcp_server(paths, request)?;
+            Ok(CommandOutput::McpServer { server })
+        }
+        McpCommand::Enable { name, target } => {
+            set_mcp_server_enabled(paths, target.into(), &name, true)?;
+            Ok(CommandOutput::Status {
+                message: "Enabled MCP server.".to_string(),
+            })
+        }
+        McpCommand::Disable { name, target } => {
+            set_mcp_server_enabled(paths, target.into(), &name, false)?;
+            Ok(CommandOutput::Status {
+                message: "Disabled MCP server.".to_string(),
+            })
+        }
+        McpCommand::Remove { name, target } => {
+            let backup = remove_mcp_server(paths, target.into(), &name)?;
+            Ok(CommandOutput::RemovedMcpServer { backup })
         }
     }
 }
@@ -980,21 +1097,23 @@ async fn preview_install_command(
     args: PreviewInstallArgs,
     installer: &Installer,
 ) -> Result<CommandOutput> {
-    let install_target = install_target(args.target, args.scope, args.dest);
-    let _download_dir = args.download_dir;
+    let install_target = install_target(args.target, args.scope, args.dest)?;
+    if let Some(download_dir) = &args.download_dir {
+        validate_path(download_dir)?;
+    }
+
     let preview = if args.local {
-        installer.preview(
-            Path::new(&args.source),
-            install_target,
-            args.conflict.into(),
-        )?
+        let source = args.source.trim();
+        validate_path(Path::new(source))?;
+        installer.preview(Path::new(source), install_target, args.conflict.into())?
     } else {
-        let downloaded = download_github_skills(&args.source)
+        let source = args.source.trim();
+        let downloaded = download_github_skills(source)
             .await
-            .with_context(|| format!("failed to download skills from {}", args.source))?;
+            .with_context(|| format!("failed to download skills from {}", source))?;
         let plan = installer.plan(InstallRequest {
             source_root: downloaded.search_root,
-            source_url: Some(args.source),
+            source_url: Some(source.to_string()),
             target: install_target,
             conflict_policy: args.conflict.into(),
             enable_after_install: true,
@@ -1024,14 +1143,18 @@ async fn install_url_command(
     paths: &ManagerPaths,
     installer: &Installer,
 ) -> Result<CommandOutput> {
-    let downloaded =
-        download_github_skills_to_cache(paths, &args.url, args.download_dir.as_deref())
-            .await
-            .with_context(|| format!("failed to download skills from {}", args.url))?;
+    let source = args.url.trim();
+    if let Some(download_dir) = &args.download_dir {
+        validate_path(download_dir)?;
+    }
+
+    let downloaded = download_github_skills_to_cache(paths, source, args.download_dir.as_deref())
+        .await
+        .with_context(|| format!("failed to download skills from {}", source))?;
     let plan = installer.plan(InstallRequest {
         source_root: downloaded.search_root,
-        source_url: Some(args.url),
-        target: install_target(args.target, args.scope, args.dest),
+        source_url: Some(source.to_string()),
+        target: install_target(args.target, args.scope, args.dest)?,
         conflict_policy: args.conflict.into(),
         enable_after_install: !args.disable_after_install,
     })?;
@@ -1040,10 +1163,11 @@ async fn install_url_command(
 }
 
 fn install_local_command(args: InstallLocalArgs, installer: &Installer) -> Result<CommandOutput> {
+    validate_path(&args.path)?;
     let plan = installer.plan(InstallRequest {
         source_root: args.path,
         source_url: None,
-        target: install_target(args.target, args.scope, args.dest),
+        target: install_target(args.target, args.scope, args.dest)?,
         conflict_policy: args.conflict.into(),
         enable_after_install: !args.disable_after_install,
     })?;
@@ -1055,15 +1179,75 @@ fn install_target(
     target: CliTarget,
     legacy_scope: Option<CliScope>,
     dest: Option<PathBuf>,
-) -> InstallTarget {
+) -> Result<InstallTarget> {
     if let Some(path) = dest {
-        return InstallTarget::Custom(path);
+        validate_path(&path)?;
+        return Ok(InstallTarget::Custom(path));
     }
 
-    legacy_scope.map(CliTarget::from).unwrap_or(target).into()
+    Ok(legacy_scope.map(CliTarget::from).unwrap_or(target).into())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn mcp_request(
+    name: String,
+    target: AgentToolTarget,
+    local: bool,
+    remote: Option<String>,
+    env: Vec<String>,
+    headers: Vec<String>,
+    disable_after_add: bool,
+    mut command: Vec<String>,
+) -> Result<McpServerRequest> {
+    let transport = if remote.is_some() {
+        McpServerTransport::Http
+    } else if local || !command.is_empty() {
+        McpServerTransport::Stdio
+    } else {
+        anyhow::bail!("choose --remote <URL> or --local -- <command> [args...]");
+    };
+
+    let (command_name, args, url) = match transport {
+        McpServerTransport::Stdio => {
+            if command.is_empty() {
+                anyhow::bail!("local MCP servers require a command after --");
+            }
+            let command_name = command.remove(0);
+            (Some(command_name), command, None)
+        }
+        McpServerTransport::Http => (None, Vec::new(), remote),
+    };
+
+    Ok(McpServerRequest {
+        name,
+        target,
+        transport,
+        command: command_name,
+        args,
+        env: parse_key_values(env)?,
+        url,
+        headers: parse_key_values(headers)?,
+        enabled: !disable_after_add,
+    })
+}
+
+fn parse_key_values(values: Vec<String>) -> Result<std::collections::BTreeMap<String, String>> {
+    let mut parsed = std::collections::BTreeMap::new();
+    for value in values {
+        let Some((key, value)) = value.split_once('=') else {
+            anyhow::bail!("expected KEY=VALUE, got `{value}`");
+        };
+        let key = key.trim();
+        if key.is_empty() {
+            anyhow::bail!("KEY cannot be empty in `{value}`");
+        }
+        parsed.insert(key.to_string(), value.trim().to_string());
+    }
+    Ok(parsed)
 }
 
 fn skill_root(paths: &ManagerPaths, target: Option<CliTarget>, path: PathBuf) -> Result<PathBuf> {
+    validate_path(&path)?;
     let resolved = if path.is_absolute() {
         path
     } else if let Some(target) = target {
@@ -1075,8 +1259,11 @@ fn skill_root(paths: &ManagerPaths, target: Option<CliTarget>, path: PathBuf) ->
     };
 
     if resolved.file_name().is_some_and(|name| name == "SKILL.md") {
-        Ok(resolved.parent().map(Path::to_path_buf).unwrap_or(resolved))
+        let resolved = resolved.parent().map(Path::to_path_buf).unwrap_or(resolved);
+        validate_path(&resolved)?;
+        Ok(resolved)
     } else {
+        validate_path(&resolved)?;
         Ok(resolved)
     }
 }

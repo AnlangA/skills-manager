@@ -1,5 +1,7 @@
 use std::{fs, process::Command};
 
+use skills_manager_core::skill::path_key;
+
 use serde_json::Value;
 use tempfile::tempdir;
 
@@ -315,6 +317,7 @@ fn target_install_disable_enable_and_remove_round_trip() {
         scan["skills"][0]["root_dir"]
             .as_str()
             .unwrap()
+            .replace('\\', "/")
             .ends_with(".config/zed/.skills-disabled/demo")
     );
 
@@ -400,6 +403,7 @@ fn claude_code_disable_moves_skill_outside_skills_root() {
         scan["skills"][0]["root_dir"]
             .as_str()
             .unwrap()
+            .replace('\\', "/")
             .ends_with(".claude/.skills-disabled/demo")
     );
 }
@@ -446,7 +450,7 @@ fn codex_disable_uses_config_toggle_without_moving_directory() {
     assert_eq!(scan["skills"][0]["scope"], "Codex");
     assert_eq!(scan["skills"][0]["enablement"], "Disabled");
     let codex_config = fs::read_to_string(sandbox.path().join(".codex/config.toml")).unwrap();
-    assert!(codex_config.contains(skill_file.to_string_lossy().as_ref()));
+    assert!(codex_config.contains(&path_key(&skill_file)));
     assert!(codex_config.contains("enabled = false"));
 
     let enable = cli(sandbox.path())
@@ -526,6 +530,93 @@ fn resources_scan_can_filter_plugins_json() {
 }
 
 #[test]
+fn mcp_add_scan_disable_and_remove_json_round_trip() {
+    let sandbox = tempdir().unwrap();
+
+    let add = cli(sandbox.path())
+        .arg("--output")
+        .arg("json")
+        .arg("mcp")
+        .arg("add")
+        .arg("demo-mcp")
+        .arg("--target")
+        .arg("codex")
+        .arg("--local")
+        .arg("--env")
+        .arg("TOKEN=secret")
+        .arg("--")
+        .arg("node")
+        .arg("server.js")
+        .output()
+        .unwrap();
+    assert_success(&add);
+    let json: Value = serde_json::from_slice(&add.stdout).unwrap();
+    assert_eq!(json["type"], "mcp_server");
+    assert_eq!(json["server"]["kind"], "McpServer");
+    assert_eq!(json["server"]["display_name"], "demo-mcp");
+    assert_eq!(json["server"]["target"], "Codex");
+
+    let scan = cli(sandbox.path())
+        .arg("--output")
+        .arg("json-v3")
+        .arg("resources")
+        .arg("scan")
+        .arg("--kind")
+        .arg("mcp-server")
+        .output()
+        .unwrap();
+    assert_success(&scan);
+    let json: Value = serde_json::from_slice(&scan.stdout).unwrap();
+    assert_eq!(json["data"]["type"], "resources");
+    assert_eq!(json["data"]["resources"].as_array().unwrap().len(), 1);
+    assert_eq!(json["data"]["resources"][0]["metadata"]["command"], "node");
+
+    let disable = cli(sandbox.path())
+        .arg("mcp")
+        .arg("disable")
+        .arg("demo-mcp")
+        .arg("--target")
+        .arg("codex")
+        .output()
+        .unwrap();
+    assert_success(&disable);
+    let scan = cli(sandbox.path())
+        .arg("--output")
+        .arg("json")
+        .arg("mcp")
+        .arg("scan")
+        .arg("--target")
+        .arg("codex")
+        .output()
+        .unwrap();
+    assert_success(&scan);
+    let json: Value = serde_json::from_slice(&scan.stdout).unwrap();
+    assert_eq!(json["type"], "mcp_servers");
+    assert_eq!(json["servers"][0]["enablement"], "Disabled");
+
+    let remove = cli(sandbox.path())
+        .arg("--output")
+        .arg("json")
+        .arg("mcp")
+        .arg("remove")
+        .arg("demo-mcp")
+        .arg("--target")
+        .arg("codex")
+        .output()
+        .unwrap();
+    assert_success(&remove);
+    let json: Value = serde_json::from_slice(&remove.stdout).unwrap();
+    assert_eq!(json["type"], "removed_mcp_server");
+    assert!(
+        json["backup"]
+            .as_str()
+            .unwrap()
+            .replace('\\', "/")
+            .contains(".codex/config.toml.backup-")
+    );
+}
+
+#[test]
 fn plugin_preview_install_and_scan_json_round_trip() {
     let sandbox = tempdir().unwrap();
     let source_root = sandbox.path().join("source-plugin");
@@ -552,6 +643,7 @@ fn plugin_preview_install_and_scan_json_round_trip() {
         json["preview"]["operation_plan"]["destination_root"]
             .as_str()
             .unwrap()
+            .replace('\\', "/")
             .ends_with(".codex/plugins/cache/local/demo-plugin/1.0.0")
     );
 

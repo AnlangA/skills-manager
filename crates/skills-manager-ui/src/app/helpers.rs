@@ -4,12 +4,15 @@
 //! build scaffold requests from form fields, compute search haystacks,
 //! and convert catalog sources into preview-ready entry states.
 
+use std::collections::BTreeMap;
+
 use skills_manager_core::{
-    InstallTarget, InstalledSkill, ManagedResource, SkillCatalogSource, SkillScaffoldRequest,
-    SkillScope, catalog_git_install_url, installed_skill_identity,
+    InstallTarget, InstalledSkill, ManagedResource, McpServerRequest, McpServerTransport,
+    SkillCatalogSource, SkillScaffoldRequest, SkillScope, catalog_git_install_url,
+    installed_skill_identity,
 };
 
-use super::state::{CatalogEntryState, CreateState, InstallState};
+use super::state::{CatalogEntryState, CreateState, InstallState, McpState};
 use super::types::{InstallSource, resolve_install_target};
 
 pub fn current_install_target(install: &InstallState) -> Result<InstallTarget, String> {
@@ -50,6 +53,39 @@ pub fn current_scaffold_request(create: &CreateState) -> Result<SkillScaffoldReq
     })
 }
 
+pub fn current_mcp_request(mcp: &McpState) -> Result<McpServerRequest, String> {
+    if mcp.name.trim().is_empty() {
+        return Err("Enter an MCP server name first.".to_string());
+    }
+
+    let (command, url) = match mcp.transport {
+        McpServerTransport::Stdio => {
+            if mcp.command.trim().is_empty() {
+                return Err("Enter a local MCP command first.".to_string());
+            }
+            (Some(mcp.command.trim().to_string()), None)
+        }
+        McpServerTransport::Http => {
+            if mcp.url.trim().is_empty() {
+                return Err("Enter a remote MCP URL first.".to_string());
+            }
+            (None, Some(mcp.url.trim().to_string()))
+        }
+    };
+
+    Ok(McpServerRequest {
+        name: mcp.name.trim().to_string(),
+        target: mcp.target.into(),
+        transport: mcp.transport,
+        command,
+        args: split_args(&mcp.args),
+        env: split_key_values(&mcp.env)?,
+        url,
+        headers: split_key_values(&mcp.headers)?,
+        enabled: mcp.enabled,
+    })
+}
+
 pub fn split_csv(value: &str) -> Vec<String> {
     value
         .split(',')
@@ -57,6 +93,34 @@ pub fn split_csv(value: &str) -> Vec<String> {
         .filter(|value| !value.is_empty())
         .map(String::from)
         .collect()
+}
+
+pub fn split_args(value: &str) -> Vec<String> {
+    value
+        .split_whitespace()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(String::from)
+        .collect()
+}
+
+pub fn split_key_values(value: &str) -> Result<BTreeMap<String, String>, String> {
+    let mut map = BTreeMap::new();
+    for raw in value.split([',', '\n']) {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            continue;
+        }
+        let Some((key, value)) = raw.split_once('=') else {
+            return Err(format!("Expected KEY=VALUE, got `{raw}`."));
+        };
+        let key = key.trim();
+        if key.is_empty() {
+            return Err(format!("KEY cannot be empty in `{raw}`."));
+        }
+        map.insert(key.to_string(), value.trim().to_string());
+    }
+    Ok(map)
 }
 
 pub fn optional_string(value: &str) -> Option<String> {

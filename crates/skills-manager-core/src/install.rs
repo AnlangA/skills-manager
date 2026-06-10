@@ -19,7 +19,7 @@ use crate::{
         LEGACY_DISABLED_SKILLS_DIR, SkillCandidate, disabled_store_root_for_skills_root,
         health_from_diagnostics, path_key, sanitize_folder_name, unique_folder_name,
     },
-    target_specific_diagnostics,
+    target_specific_diagnostics, validate_path,
 };
 
 /// Defines how to resolve destination conflicts while installing one or more skills.
@@ -100,10 +100,13 @@ impl InstallTarget {
             Self::OpenCode => Ok(paths.opencode_skills_dir()),
             Self::Codex => Ok(paths.codex_skills_dir()),
             Self::Zed => Ok(paths.zed_skills_dir()),
-            Self::Custom(path) if path.as_os_str().is_empty() => {
-                Err(SkillsManagerError::UnknownSkillScope(path.clone()))
+            Self::Custom(path) if path.as_os_str().is_empty() => Err(
+                SkillsManagerError::InvalidPath("custom install root is empty".to_string()),
+            ),
+            Self::Custom(path) => {
+                validate_path(path)?;
+                Ok(path.clone())
             }
-            Self::Custom(path) => Ok(path.clone()),
         }
     }
 }
@@ -1164,7 +1167,7 @@ mod tests {
             (
                 InstallTarget::Droid,
                 SkillScope::Droid,
-                "home/.droid/skills/demo",
+                "home/.factory/skills/demo",
             ),
             (
                 InstallTarget::OpenCode,
@@ -1222,8 +1225,8 @@ mod tests {
             (
                 InstallTarget::Droid,
                 SkillScope::Droid,
-                "home/.droid/skills/demo",
-                "home/.droid/.skills-disabled/demo",
+                "home/.factory/skills/demo",
+                "home/.factory/.skills-disabled/demo",
             ),
             (
                 InstallTarget::OpenCode,
@@ -1387,7 +1390,7 @@ mod tests {
         let skills = scan_installed_skills(&paths).unwrap();
         assert_eq!(skills[0].enablement, SkillEnablement::Disabled);
         let codex_config = fs::read_to_string(paths.codex_config_file()).unwrap();
-        assert!(codex_config.contains(skill_file.to_string_lossy().as_ref()));
+        assert!(codex_config.contains(&path_key(&skill_file)));
         assert!(codex_config.contains("enabled = false"));
 
         installer
@@ -1398,7 +1401,7 @@ mod tests {
         let skills = scan_installed_skills(&paths).unwrap();
         assert_eq!(skills[0].enablement, SkillEnablement::Enabled);
         let codex_config = fs::read_to_string(paths.codex_config_file()).unwrap();
-        assert!(codex_config.contains(skill_file.to_string_lossy().as_ref()));
+        assert!(codex_config.contains(&path_key(&skill_file)));
         assert!(codex_config.contains("enabled = true"));
     }
 

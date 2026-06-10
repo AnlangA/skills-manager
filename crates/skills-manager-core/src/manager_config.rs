@@ -8,6 +8,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, OpenOptions},
+    mem,
     path::{Path, PathBuf},
     thread::sleep,
     time::{Duration, Instant},
@@ -125,7 +126,9 @@ impl ManagerConfig {
         }
 
         let raw = fs::read_to_string(file)?;
-        Ok(toml::from_str(&raw)?)
+        let mut config: Self = toml::from_str(&raw)?;
+        config.normalize_stored_paths();
+        Ok(config)
     }
 
     /// Writes config as pretty TOML and creates parent directories as needed.
@@ -216,6 +219,13 @@ impl ManagerConfig {
                 installed_at: Some(Utc::now()),
             },
         );
+    }
+
+    fn normalize_stored_paths(&mut self) {
+        self.disabled_skill_files = normalize_path_set(mem::take(&mut self.disabled_skill_files));
+        self.installed = normalize_path_map(mem::take(&mut self.installed));
+        self.downloads = normalize_path_map(mem::take(&mut self.downloads));
+        self.custom_install_roots = normalize_paths_vec(mem::take(&mut self.custom_install_roots));
     }
 
     /// Records a plugin/resource install keyed by a stable resource identifier.
@@ -361,6 +371,37 @@ fn remove_stale_lock(lock_path: &Path) {
     }
 }
 
+fn normalize_path_set(values: BTreeSet<String>) -> BTreeSet<String> {
+    values
+        .into_iter()
+        .map(|path| path_key(Path::new(&path)))
+        .collect()
+}
+
+fn normalize_path_map<T>(values: BTreeMap<String, T>) -> BTreeMap<String, T> {
+    let mut normalized = BTreeMap::new();
+    for (path, metadata) in values {
+        let key = path_key(Path::new(&path));
+        normalized.entry(key).or_insert(metadata);
+    }
+    normalized
+}
+
+fn normalize_paths_vec(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    paths
+        .into_iter()
+        .scan(BTreeSet::new(), |seen, path| {
+            let key = path_key(&path);
+            if seen.insert(key) {
+                Some(Some(path))
+            } else {
+                Some(None)
+            }
+        })
+        .flatten()
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -408,5 +449,92 @@ mod tests {
 
         let config = ManagerConfig::load(paths.as_ref()).unwrap();
         assert_eq!(config.recent_projects.len(), 8);
+    }
+
+    #[test]
+    fn load_normalizes_stored_path_metadata() {
+        let dir = tempdir().unwrap();
+        let paths = ManagerPaths::with_home(
+            dir.path().join("home"),
+            dir.path().join("data"),
+            dir.path().join("config"),
+            None,
+        );
+
+        fs::create_dir_all(paths.config_dir()).unwrap();
+        let legacy = ManagerConfig {
+            disabled_skill_files: ["./skill.md", "skill.md"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+            installed: [
+                (
+                    "skill.md".into(),
+                    InstalledMetadata {
+                        source_url: Some("a".into()),
+                        installed_at: None,
+                    },
+                ),
+                (
+                    "SKILL.MD".into(),
+                    InstalledMetadata {
+                        source_url: Some("b".into()),
+                        installed_at: None,
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            custom_install_roots: vec![PathBuf::from("./foo"), PathBuf::from("foo")],
+            default_download_dir: None,
+            downloads: [
+                (
+                    "skill_download_dir".into(),
+                    DownloadedMetadata {
+                        source_url: "c".into(),
+                        downloaded_at: None,
+                        search_root: None,
+                        candidate_count: None,
+                        resource_count: None,
+                        resource_bytes: None,
+                    },
+                ),
+                (
+                    "SKILL_DOWNLOAD_DIR".into(),
+                    DownloadedMetadata {
+                        source_url: "d".into(),
+                        downloaded_at: None,
+                        search_root: None,
+                        candidate_count: None,
+                        resource_count: None,
+                        resource_bytes: None,
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            recent_projects: Vec::new(),
+            marketplace_sources: BTreeMap::new(),
+            resource_installs: BTreeMap::new(),
+        };
+        fs::write(
+            paths.app_config_file(),
+            toml::to_string_pretty(&legacy).unwrap().as_bytes(),
+        )
+        .unwrap();
+
+        let loaded = ManagerConfig::load(&paths).unwrap();
+        assert_eq!(loaded.disabled_skill_files.len(), 1);
+        if cfg!(windows) {
+            assert_eq!(loaded.installed.len(), 1);
+        } else {
+            assert_eq!(loaded.installed.len(), 2);
+        }
+        assert_eq!(loaded.custom_install_roots.len(), 1);
+        if cfg!(windows) {
+            assert_eq!(loaded.downloads.len(), 1);
+        } else {
+            assert_eq!(loaded.downloads.len(), 2);
+        }
     }
 }

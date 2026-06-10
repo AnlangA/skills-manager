@@ -148,6 +148,31 @@ pub fn filtered_marketplace_indices(
     indices
 }
 
+pub fn filtered_mcp_indices(
+    resources: &[ManagedResource],
+    search_index: &[ResourceSearchEntry],
+    search_query: &str,
+    target_filter: PluginTargetFilter,
+    health_filter: HealthFilter,
+    sort_key: SortKey,
+) -> Vec<usize> {
+    let query = search_query.trim().to_lowercase();
+    let mut indices = search_index
+        .iter()
+        .filter(|entry| entry.kind == ResourceKind::McpServer)
+        .filter(|entry| query.is_empty() || entry.haystack.contains(&query))
+        .filter_map(|entry| {
+            resources
+                .get(entry.resource_index)
+                .filter(|resource| target_filter.matches(resource.target))
+                .filter(|resource| health_filter.matches(resource_health_as_skill(resource.health)))
+                .map(|_| entry.resource_index)
+        })
+        .collect::<Vec<_>>();
+    sort_resource_indices(&mut indices, resources, sort_key);
+    indices
+}
+
 fn resource_health_as_skill(health: ResourceHealth) -> SkillHealth {
     match health {
         ResourceHealth::Valid => SkillHealth::Valid,

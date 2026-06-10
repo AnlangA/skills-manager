@@ -9,6 +9,7 @@ mod create;
 mod install;
 mod inventory;
 mod marketplace;
+mod mcp;
 mod plugins;
 mod settings;
 
@@ -48,6 +49,12 @@ fn sidebar(app: &App) -> Element<'_, Message> {
             nav_icon(ActiveView::Plugins),
             app.active_view == ActiveView::Plugins,
             Message::ActiveViewSelected(ActiveView::Plugins),
+        ),
+        components::nav_button(
+            ActiveView::Mcp.label(),
+            nav_icon(ActiveView::Mcp),
+            app.active_view == ActiveView::Mcp,
+            Message::ActiveViewSelected(ActiveView::Mcp),
         ),
         components::nav_button(
             ActiveView::Marketplace.label(),
@@ -154,6 +161,7 @@ fn main_content(app: &App) -> Element<'_, Message> {
     let body = match app.active_view {
         ActiveView::Library => inventory::view(app),
         ActiveView::Plugins => plugins::view(app),
+        ActiveView::Mcp => mcp::view(app),
         ActiveView::Install => install::view(app),
         ActiveView::Create => create::view(app),
         ActiveView::Marketplace => marketplace::view(app),
@@ -175,6 +183,7 @@ fn nav_icon(view: ActiveView) -> &'static str {
     match view {
         ActiveView::Library => icons::LIST,
         ActiveView::Plugins => icons::DATABASE,
+        ActiveView::Mcp => icons::SETTINGS,
         ActiveView::Install => icons::DOWNLOAD,
         ActiveView::Create => icons::FILE,
         ActiveView::Marketplace => icons::SEARCH,

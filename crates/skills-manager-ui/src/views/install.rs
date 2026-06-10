@@ -6,15 +6,15 @@
 
 use iced::{
     Alignment, Element, Length,
-    widget::{checkbox, column, container, row, scrollable, text},
+    widget::{checkbox, column, container, row, scrollable, text, text_editor},
 };
-use skills_manager_core::{ConflictPolicy, SkillHealth, format_bytes};
+use skills_manager_core::{ConflictPolicy, McpServerTransport, SkillHealth, format_bytes};
 
 use crate::theme::*;
 use crate::{
     app::{
-        App, CatalogEntryState, DownloadedEntryState, InstallSource, Message,
-        PreviewCandidateState, UiConflictPolicy, UiScope,
+        App, CatalogEntryState, DownloadedEntryState, ExpandedEditorTarget, InstallSource, Message,
+        PreviewCandidateState, UiAgentTarget, UiConflictPolicy, UiScope,
     },
     components, icons, theme,
 };
@@ -37,8 +37,9 @@ pub fn view(app: &App) -> Element<'_, Message> {
             .as_ref()
             .is_some_and(|preview| !preview.has_blocking_conflicts());
 
-    let setup_panel = container(scrollable(
+    let skill_panel = components::card(scrollable(
         column![
+            components::section_header("Skill Install", "GitHub URL, local folder, or catalog"),
             step_header(1, "Source", "Choose where to install from"),
             source_controls(app),
             download_controls(app, can_download),
@@ -56,22 +57,178 @@ pub fn view(app: &App) -> Element<'_, Message> {
         ]
         .spacing(SPACING_LG),
     ))
-    .padding(SPACING_XL)
-    .style(theme::card)
-    .width(Length::FillPortion(2))
+    .width(Length::FillPortion(3))
     .height(Length::Fill);
 
-    let preview_panel = components::card(
+    let right_panel = column![mcp_install_panel(app), editor_or_preview_panel(app)]
+        .spacing(SPACING_LG)
+        .width(Length::FillPortion(2))
+        .height(Length::Fill);
+
+    row![skill_panel, right_panel]
+        .spacing(SPACING_LG)
+        .height(Length::Fill)
+        .into()
+}
+
+fn mcp_install_panel(app: &App) -> Element<'_, Message> {
+    let target = container(components::styled_pick_list(
+        &UiAgentTarget::ALL,
+        Some(app.mcp.target),
+        Message::McpTargetSelected,
+        Length::Fill,
+    ))
+    .width(Length::FillPortion(1));
+    let transport = container(components::styled_pick_list(
+        &McpServerTransport::ALL,
+        Some(app.mcp.transport),
+        Message::McpTransportSelected,
+        Length::Fill,
+    ))
+    .width(Length::FillPortion(1));
+
+    let mut fields = column![
+        components::expandable_field(
+            "Name",
+            "",
+            "filesystem",
+            &app.mcp.name,
+            Message::McpNameChanged,
+            ExpandedEditorTarget::McpName,
+        ),
+        row![target, transport,]
+            .spacing(SPACING_MD)
+            .align_y(Alignment::Center),
+    ]
+    .spacing(SPACING_SM);
+
+    fields = match app.mcp.transport {
+        McpServerTransport::Stdio => fields
+            .push(
+                row![
+                    container(components::expandable_field(
+                        "Command",
+                        "",
+                        "node",
+                        &app.mcp.command,
+                        Message::McpCommandChanged,
+                        ExpandedEditorTarget::McpCommand,
+                    ))
+                    .width(Length::FillPortion(1)),
+                    container(components::expandable_field(
+                        "Args",
+                        "",
+                        "server.js --stdio",
+                        &app.mcp.args,
+                        Message::McpArgsChanged,
+                        ExpandedEditorTarget::McpArgs,
+                    ))
+                    .width(Length::FillPortion(1)),
+                ]
+                .spacing(SPACING_MD),
+            )
+            .push(components::expandable_field(
+                "Env",
+                "",
+                "KEY=value, TOKEN=...",
+                &app.mcp.env,
+                Message::McpEnvChanged,
+                ExpandedEditorTarget::McpEnv,
+            )),
+        McpServerTransport::Http => fields
+            .push(components::expandable_field(
+                "URL",
+                "",
+                "https://example.com/mcp",
+                &app.mcp.url,
+                Message::McpUrlChanged,
+                ExpandedEditorTarget::McpUrl,
+            ))
+            .push(components::expandable_field(
+                "Headers",
+                "",
+                "Authorization=Bearer ...",
+                &app.mcp.headers,
+                Message::McpHeadersChanged,
+                ExpandedEditorTarget::McpHeaders,
+            )),
+    };
+
+    let enabled = checkbox(app.mcp.enabled)
+        .size(18)
+        .on_toggle(Message::McpEnabledChanged);
+    let submit = components::primary_button("Install MCP", Some(icons::DOWNLOAD))
+        .on_press_maybe((!app.busy).then_some(Message::AddMcpServer));
+
+    components::card(
+        column![
+            components::section_header("MCP Server", app.mcp.target.to_string()),
+            fields,
+            row![
+                row![
+                    enabled,
+                    text("Enabled").size(FONT_CAPTION).color(TEXT_SECONDARY),
+                ]
+                .spacing(SPACING_SM)
+                .align_y(Alignment::Center),
+                column![].width(Length::Fill),
+                submit,
+            ]
+            .spacing(SPACING_MD)
+            .align_y(Alignment::Center),
+        ]
+        .spacing(SPACING_MD),
+    )
+    .into()
+}
+
+fn editor_or_preview_panel(app: &App) -> Element<'_, Message> {
+    if let Some(target) = app.form_editor.active.filter(|target| target.is_install()) {
+        return expanded_editor_panel(app, target);
+    }
+
+    components::card(
         column![
             components::section_header("Preview", preview_meta(app)),
             scrollable(preview_list(app)).height(Length::Fill),
         ]
         .spacing(SPACING_MD),
     )
-    .width(Length::FillPortion(3))
-    .height(Length::Fill);
+    .height(Length::Fill)
+    .into()
+}
 
-    components::form_preview_layout(setup_panel, preview_panel)
+fn expanded_editor_panel(app: &App, target: ExpandedEditorTarget) -> Element<'_, Message> {
+    components::card(
+        column![
+            row![
+                column![
+                    text(target.label()).size(FONT_BODY).color(TEXT),
+                    text(target.helper())
+                        .size(FONT_MICRO)
+                        .color(TEXT_MUTED)
+                        .wrapping(text::Wrapping::WordOrGlyph),
+                ]
+                .spacing(SPACING_XS)
+                .width(Length::Fill),
+                components::secondary_button("Done", None).on_press(Message::CloseExpandedEditor),
+            ]
+            .spacing(SPACING_MD)
+            .align_y(Alignment::Center),
+            container(
+                text_editor(&app.form_editor.content)
+                    .placeholder(target.placeholder())
+                    .on_action(Message::ExpandedEditorAction)
+                    .padding(SPACING_MD)
+                    .height(Length::Fill),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill),
+        ]
+        .spacing(SPACING_MD),
+    )
+    .height(Length::Fill)
+    .into()
 }
 
 fn step_header<'a>(step: u8, title: &'a str, subtitle: &'a str) -> Element<'a, Message> {
@@ -106,28 +263,31 @@ fn source_controls(app: &App) -> Element<'_, Message> {
 
 fn source_input(app: &App) -> Element<'_, Message> {
     match app.install.install_source {
-        InstallSource::Url => components::field(
+        InstallSource::Url => components::expandable_field(
             "GitHub source",
             "Repository shorthand, full URL, or tree URL.",
             "github.com/owner/repo",
             &app.install.source_url,
             Message::SourceUrlChanged,
+            ExpandedEditorTarget::InstallSourceUrl,
         ),
-        InstallSource::Local => components::field(
+        InstallSource::Local => components::expandable_field(
             "Local source folder",
             "Folder containing one or more SKILL.md files.",
-            "/path/to/folder/containing/SKILL.md",
+            "path/to/folder/containing/SKILL.md",
             &app.install.local_source_path,
             Message::LocalSourcePathChanged,
+            ExpandedEditorTarget::InstallLocalSourcePath,
         ),
         InstallSource::Downloaded => downloaded_entries(app),
         InstallSource::Catalog => column![
-            components::field(
+            components::expandable_field(
                 "Catalog URL",
                 "Load from skills.json, catalog.json, or marketplace.json.",
                 "GitHub URL for catalog file",
                 &app.install.catalog_url,
                 Message::CatalogUrlChanged,
+                ExpandedEditorTarget::InstallCatalogUrl,
             ),
             components::secondary_button("Load Catalog", Some(icons::DATABASE)).on_press_maybe(
                 (!app.busy && !app.install.catalog_url.trim().is_empty())
@@ -146,11 +306,13 @@ fn download_controls(app: &App, can_download: bool) -> Element<'_, Message> {
     }
 
     column![
-        components::compact_field(
+        components::expandable_field(
             "Download cache override (optional)",
+            "",
             "Use saved default download path",
             &app.install.download_path_override,
             Message::DownloadPathOverrideChanged,
+            ExpandedEditorTarget::InstallDownloadPathOverride,
         ),
         row![
             text("Default:").size(FONT_MICRO).color(TEXT_MUTED),
@@ -199,11 +361,13 @@ fn destination_controls(app: &App) -> Element<'_, Message> {
     .spacing(SPACING_MD);
 
     if app.install.install_scope == UiScope::Custom {
-        controls = controls.push(components::compact_field(
+        controls = controls.push(components::expandable_field(
             "Custom install path",
-            "/path/to/skills/root",
+            "",
+            "path/to/skills/root",
             &app.install.custom_install_path,
             Message::CustomInstallPathChanged,
+            ExpandedEditorTarget::InstallCustomPath,
         ));
     }
 

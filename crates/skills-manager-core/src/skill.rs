@@ -550,7 +550,7 @@ pub fn health_from_diagnostics(diagnostics: &[SkillDiagnostic], shadowed: bool) 
 
 /// Convert a filesystem path to a stable configuration key.
 pub fn path_key(path: &Path) -> String {
-    path.to_string_lossy().to_string()
+    crate::normalize_path_key(path)
 }
 
 /// Format bytes in human-readable binary units.

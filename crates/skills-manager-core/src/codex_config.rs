@@ -273,7 +273,7 @@ mod tests {
         let written = fs::read_to_string(paths.codex_config_file()).unwrap();
         assert!(written.contains("model = \"gpt-5\""));
         assert!(written.contains("/old/SKILL.md"));
-        assert!(written.contains(skill_file.to_string_lossy().as_ref()));
+        assert!(written.contains(&path_key(&skill_file)));
         assert!(written.contains("enabled = false"));
     }
 

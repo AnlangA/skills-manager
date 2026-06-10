@@ -13,7 +13,7 @@ pub enum SkillScope {
     Global,
     /// Claude Code scope (`~/.claude/skills`).
     ClaudeCode,
-    /// Droid scope (`~/.droid/skills`).
+    /// Droid scope (`~/.factory/skills`).
     Droid,
     /// OpenCode scope (`~/.config/opencode/skills`).
     #[serde(alias = "Pencode")]
@@ -266,6 +266,8 @@ pub enum ResourceKind {
     Skill,
     /// Plugin bundle resource.
     Plugin,
+    /// MCP server configuration entry.
+    McpServer,
     /// Catalog source descriptors.
     Marketplace,
 }
@@ -276,6 +278,7 @@ impl ResourceKind {
         match self {
             Self::Skill => "skill",
             Self::Plugin => "plugin",
+            Self::McpServer => "mcp-server",
             Self::Marketplace => "marketplace",
         }
     }
@@ -286,6 +289,7 @@ impl fmt::Display for ResourceKind {
         formatter.write_str(match self {
             Self::Skill => "Skills",
             Self::Plugin => "Plugins",
+            Self::McpServer => "MCP servers",
             Self::Marketplace => "Marketplaces",
         })
     }
@@ -300,6 +304,12 @@ pub enum AgentToolTarget {
     Codex,
     /// Claude Code target.
     ClaudeCode,
+    /// Factory Droid / Droid target.
+    Droid,
+    /// OpenCode target.
+    OpenCode,
+    /// Zed target.
+    Zed,
 }
 
 impl AgentToolTarget {
@@ -309,6 +319,9 @@ impl AgentToolTarget {
             Self::Generic => "Generic",
             Self::Codex => "Codex",
             Self::ClaudeCode => "Claude Code",
+            Self::Droid => "Droid",
+            Self::OpenCode => "OpenCode",
+            Self::Zed => "Zed",
         }
     }
 
@@ -318,6 +331,9 @@ impl AgentToolTarget {
             Self::Generic => "generic",
             Self::Codex => "codex",
             Self::ClaudeCode => "claude-code",
+            Self::Droid => "droid",
+            Self::OpenCode => "opencode",
+            Self::Zed => "zed",
         }
     }
 }

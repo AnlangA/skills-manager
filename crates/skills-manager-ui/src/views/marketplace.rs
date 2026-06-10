@@ -226,6 +226,9 @@ fn target_chip<'a>(target: AgentToolTarget) -> iced::widget::Container<'a, Messa
     match target {
         AgentToolTarget::Codex => components::scope_chip(SkillScope::Codex),
         AgentToolTarget::ClaudeCode => components::scope_chip(SkillScope::ClaudeCode),
+        AgentToolTarget::Droid => components::scope_chip(SkillScope::Droid),
+        AgentToolTarget::OpenCode => components::scope_chip(SkillScope::OpenCode),
+        AgentToolTarget::Zed => components::scope_chip(SkillScope::Zed),
         AgentToolTarget::Generic => components::scope_chip(SkillScope::Custom),
     }
 }

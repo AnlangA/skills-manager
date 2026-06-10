@@ -171,18 +171,35 @@ pub enum PluginTargetFilter {
     Codex,
     /// Show only Claude Code plugins.
     ClaudeCode,
+    /// Show only Droid resources.
+    Droid,
+    /// Show only OpenCode resources.
+    OpenCode,
+    /// Show only Zed resources.
+    Zed,
     /// Show only generic plugins.
     Generic,
 }
 
 impl PluginTargetFilter {
-    pub const ALL: [Self; 4] = [Self::All, Self::Codex, Self::ClaudeCode, Self::Generic];
+    pub const ALL: [Self; 7] = [
+        Self::All,
+        Self::Codex,
+        Self::ClaudeCode,
+        Self::Droid,
+        Self::OpenCode,
+        Self::Zed,
+        Self::Generic,
+    ];
 
     pub fn matches(self, target: AgentToolTarget) -> bool {
         match self {
             Self::All => true,
             Self::Codex => target == AgentToolTarget::Codex,
             Self::ClaudeCode => target == AgentToolTarget::ClaudeCode,
+            Self::Droid => target == AgentToolTarget::Droid,
+            Self::OpenCode => target == AgentToolTarget::OpenCode,
+            Self::Zed => target == AgentToolTarget::Zed,
             Self::Generic => target == AgentToolTarget::Generic,
         }
     }
@@ -194,6 +211,9 @@ impl fmt::Display for PluginTargetFilter {
             Self::All => "All targets",
             Self::Codex => "Codex",
             Self::ClaudeCode => "Claude Code",
+            Self::Droid => "Droid",
+            Self::OpenCode => "OpenCode",
+            Self::Zed => "Zed",
             Self::Generic => "Generic",
         })
     }

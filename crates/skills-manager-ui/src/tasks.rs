@@ -14,11 +14,12 @@ use std::{
 use iced::Task;
 use skills_manager_core::{
     AgentToolTarget, CatalogFormat, ConflictPolicy, DownloadedSkillEntry, InstallRequest,
-    InstallTarget, Installer, ManagerConfig, ManagerPaths, OperationPlan, ProjectRoot,
-    ResourceManager, SkillScaffoldRequest, WorkspaceSnapshot, create_skill_scaffold,
-    download_github_catalog, download_github_skills, download_github_skills_to_cache,
-    downloaded_skill_entry, export_installed_catalog, preview_skill_scaffold,
-    remove_downloaded_skills, scan_installed_skills,
+    InstallTarget, Installer, ManagerConfig, ManagerPaths, McpServerRequest, OperationPlan,
+    ProjectRoot, ResourceManager, SkillScaffoldRequest, WorkspaceSnapshot, add_mcp_server,
+    create_skill_scaffold, download_github_catalog, download_github_skills,
+    download_github_skills_to_cache, downloaded_skill_entry, export_installed_catalog,
+    preview_skill_scaffold, remove_downloaded_skills, remove_mcp_server, scan_installed_skills,
+    set_mcp_server_enabled, validate_path,
 };
 
 use crate::app::{
@@ -41,8 +42,12 @@ pub fn save_default_download_path_task(project_path: String, value: String) -> T
         async move {
             let paths = paths_from_project(&project_path)?;
             let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                validate_path(Path::new(trimmed)).map_err(|error| error.to_string())?;
+            }
+            let resolved = Path::new(trimmed);
             ManagerConfig::update(&paths, |config| {
-                if trimmed.is_empty() || Path::new(trimmed) == paths.downloads_dir() {
+                if trimmed.is_empty() || resolved == paths.downloads_dir() {
                     config.set_default_download_dir(None);
                 } else {
                     config.set_default_download_dir(Some(PathBuf::from(trimmed)));
@@ -64,15 +69,31 @@ pub fn download_source_task(
     Task::perform(
         async move {
             let paths = paths_from_project(&project_path)?;
-            let override_dir = download_dir.as_deref().map(Path::new);
-            let downloaded = download_github_skills_to_cache(&paths, &url, override_dir)
-                .await
-                .map_err(|error| error.to_string())?;
-            Ok(format!(
-                "Downloaded {} candidate(s) to {}.",
-                downloaded.candidate_count,
-                downloaded.root_dir.display()
-            ))
+            let override_dir = download_dir
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(Path::new);
+            if let Some(override_dir) = override_dir {
+                validate_path(override_dir).map_err(|error| error.to_string())?;
+                let downloaded = download_github_skills_to_cache(&paths, &url, Some(override_dir))
+                    .await
+                    .map_err(|error| error.to_string())?;
+                Ok(format!(
+                    "Downloaded {} candidate(s) to {}.",
+                    downloaded.candidate_count,
+                    downloaded.root_dir.display()
+                ))
+            } else {
+                let downloaded = download_github_skills_to_cache(&paths, &url, None)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                Ok(format!(
+                    "Downloaded {} candidate(s) to {}.",
+                    downloaded.candidate_count,
+                    downloaded.root_dir.display()
+                ))
+            }
         },
         Message::Downloaded,
     )
@@ -121,7 +142,8 @@ pub fn preview_task(
                     ))
                 }
                 InstallSource::Local => {
-                    let source_root = PathBuf::from(&value);
+                    let source_root = PathBuf::from(value.trim());
+                    validate_path(&source_root).map_err(|error| error.to_string())?;
                     let preview = installer
                         .plan(InstallRequest {
                             source_root: source_root.clone(),
@@ -146,7 +168,9 @@ pub fn preview_task(
                     ))
                 }
                 InstallSource::Downloaded => {
-                    let downloaded = downloaded_skill_entry(&paths, &PathBuf::from(&value))
+                    let source_root = PathBuf::from(value.trim());
+                    validate_path(&source_root).map_err(|error| error.to_string())?;
+                    let downloaded = downloaded_skill_entry(&paths, &source_root)
                         .map_err(|error| error.to_string())?;
                     let preview = installer
                         .plan(InstallRequest {
@@ -195,15 +219,28 @@ pub fn install_source_task(
             let installer = Installer::new(paths.clone());
             let (source_root, source_url) = match source {
                 InstallSource::Url => {
-                    let override_dir = download_dir.as_deref().map(Path::new);
+                    let override_dir = download_dir
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(Path::new);
+                    if let Some(override_dir) = override_dir {
+                        validate_path(override_dir).map_err(|error| error.to_string())?;
+                    }
                     let downloaded = download_github_skills_to_cache(&paths, &value, override_dir)
                         .await
                         .map_err(|error| error.to_string())?;
                     (downloaded.search_root, Some(value))
                 }
-                InstallSource::Local => (PathBuf::from(&value), None),
+                InstallSource::Local => {
+                    let source_root = PathBuf::from(value.trim());
+                    validate_path(&source_root).map_err(|error| error.to_string())?;
+                    (source_root, None)
+                }
                 InstallSource::Downloaded => {
-                    let downloaded = downloaded_skill_entry(&paths, &PathBuf::from(&value))
+                    let source_root = PathBuf::from(value.trim());
+                    validate_path(&source_root).map_err(|error| error.to_string())?;
+                    let downloaded = downloaded_skill_entry(&paths, &source_root)
                         .map_err(|error| error.to_string())?;
                     (downloaded.search_root, Some(downloaded.source_url))
                 }
@@ -382,6 +419,58 @@ pub fn remove_plugin_task(
             Ok(format!("Removed plugin. Backup: {}", backup.display()))
         },
         Message::PluginRemoved,
+    )
+}
+
+pub fn add_mcp_server_task(project_path: String, request: McpServerRequest) -> Task<Message> {
+    Task::perform(
+        async move {
+            let paths = paths_from_project(&project_path)?;
+            let server = add_mcp_server(&paths, request).map_err(|error| error.to_string())?;
+            Ok(format!(
+                "Added MCP server {} for {}.",
+                server.display_name,
+                server.target.label()
+            ))
+        },
+        Message::McpServerAdded,
+    )
+}
+
+pub fn toggle_mcp_server_task(
+    project_path: String,
+    name: String,
+    target: AgentToolTarget,
+    enabled: bool,
+) -> Task<Message> {
+    Task::perform(
+        async move {
+            let paths = paths_from_project(&project_path)?;
+            set_mcp_server_enabled(&paths, target, &name, enabled)
+                .map_err(|error| error.to_string())?;
+            Ok(if enabled {
+                "Enabled MCP server.".to_string()
+            } else {
+                "Disabled MCP server.".to_string()
+            })
+        },
+        Message::McpServerToggled,
+    )
+}
+
+pub fn remove_mcp_server_task(
+    project_path: String,
+    name: String,
+    target: AgentToolTarget,
+) -> Task<Message> {
+    Task::perform(
+        async move {
+            let paths = paths_from_project(&project_path)?;
+            let backup =
+                remove_mcp_server(&paths, target, &name).map_err(|error| error.to_string())?;
+            Ok(format!("Removed MCP server. Backup: {}", backup.display()))
+        },
+        Message::McpServerRemoved,
     )
 }
 

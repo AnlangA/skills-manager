@@ -5,11 +5,16 @@
 
 use std::path::PathBuf;
 
-use skills_manager_core::{AgentToolTarget, SkillScaffoldPreview, WorkspaceSnapshot};
+use iced::widget::text_editor;
+use skills_manager_core::{
+    AgentToolTarget, McpServerTransport, SkillScaffoldPreview, WorkspaceSnapshot,
+};
 
 use super::filters::{HealthFilter, PluginTargetFilter, ScopeFilter, SortKey, SourceFilter};
 use super::state::{CatalogEntryState, PreviewState};
-use super::types::{InstallSource, UiCatalogFormat, UiConflictPolicy, UiScope};
+use super::types::{
+    ExpandedEditorTarget, InstallSource, UiAgentTarget, UiCatalogFormat, UiConflictPolicy, UiScope,
+};
 
 /// All messages dispatched by UI views and processed by the update loop.
 #[derive(Debug, Clone)]
@@ -26,8 +31,16 @@ pub enum Message {
     PluginSearchChanged(String),
     /// Marketplace search input changed.
     MarketplaceSearchChanged(String),
+    /// MCP server search input changed.
+    McpSearchChanged(String),
     /// Sidebar navigation selection changed.
     ActiveViewSelected(super::types::ActiveView),
+    /// Open a form field in the wide editor panel.
+    OpenExpandedEditor(ExpandedEditorTarget),
+    /// Close the wide editor panel.
+    CloseExpandedEditor,
+    /// Edit action from the wide text editor.
+    ExpandedEditorAction(text_editor::Action),
     /// Scope filter changed in the inventory view.
     ScopeFilterSelected(ScopeFilter),
     /// Health filter changed in the inventory view.
@@ -36,6 +49,10 @@ pub enum Message {
     SourceFilterSelected(SourceFilter),
     /// Plugin target filter changed in the plugins view.
     PluginTargetFilterSelected(PluginTargetFilter),
+    /// MCP target filter changed in the MCP view.
+    McpTargetFilterSelected(PluginTargetFilter),
+    /// MCP health filter changed in the MCP view.
+    McpHealthFilterSelected(HealthFilter),
     /// Sort order changed in the inventory view.
     SortSelected(SortKey),
     /// Skill selected in the inventory list.
@@ -118,6 +135,38 @@ pub enum Message {
     ConfirmRemovePlugin(String, AgentToolTarget),
     /// Result of removing a plugin.
     PluginRemoved(Result<String, String>),
+    /// MCP add form name input changed.
+    McpNameChanged(String),
+    /// MCP add form target changed.
+    McpTargetSelected(UiAgentTarget),
+    /// MCP add form transport changed.
+    McpTransportSelected(McpServerTransport),
+    /// MCP add form command input changed.
+    McpCommandChanged(String),
+    /// MCP add form args input changed.
+    McpArgsChanged(String),
+    /// MCP add form env input changed.
+    McpEnvChanged(String),
+    /// MCP add form URL input changed.
+    McpUrlChanged(String),
+    /// MCP add form headers input changed.
+    McpHeadersChanged(String),
+    /// MCP add form enabled toggle changed.
+    McpEnabledChanged(bool),
+    /// Add the MCP server from the form.
+    AddMcpServer,
+    /// Result of adding an MCP server.
+    McpServerAdded(Result<String, String>),
+    /// Toggle MCP server enablement.
+    SetMcpServerEnabled(String, AgentToolTarget, bool),
+    /// Result of toggling an MCP server.
+    McpServerToggled(Result<String, String>),
+    /// Request MCP server removal.
+    RequestRemoveMcpServer(String),
+    /// Confirm MCP server removal.
+    ConfirmRemoveMcpServer(String, AgentToolTarget),
+    /// Result of removing an MCP server.
+    McpServerRemoved(Result<String, String>),
     /// Preview a downloaded bundle before installing.
     PreviewDownloaded(PathBuf),
     /// Request removal of a downloaded bundle (show confirmation).

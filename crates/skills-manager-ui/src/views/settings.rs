@@ -32,14 +32,14 @@ fn path_settings(app: &App) -> Element<'_, Message> {
         components::field(
             "Project folder",
             "Project scope resolves to <project>/.agents/skills.",
-            "/path/to/project",
+            "path/to/project",
             &app.settings.project_path,
             Message::ProjectPathChanged,
         ),
         components::field(
             "Default download folder",
             "GitHub downloads are cached here unless overridden.",
-            "/path/to/downloaded/skills",
+            "path/to/downloaded/skills",
             &app.settings.default_download_path,
             Message::DefaultDownloadPathChanged,
         ),

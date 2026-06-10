@@ -12,7 +12,7 @@ pub mod state;
 pub mod types;
 pub mod update;
 
-pub use derived::{filtered_marketplace_indices, filtered_plugin_indices};
+pub use derived::{filtered_marketplace_indices, filtered_mcp_indices, filtered_plugin_indices};
 pub use filters::*;
 pub use helpers::*;
 pub use message::Message;
