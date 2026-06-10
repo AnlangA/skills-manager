@@ -52,6 +52,9 @@ pub struct ManagerConfig {
     /// Resource installation metadata.
     #[serde(default)]
     pub resource_installs: BTreeMap<String, InstalledMetadata>,
+    /// Resource ids explicitly disabled by this manager.
+    #[serde(default)]
+    pub disabled_resources: BTreeSet<String>,
 }
 
 /// Metadata for an installed skill or plugin entry.
@@ -242,6 +245,22 @@ impl ManagerConfig {
     /// Removes a tracked resource install entry.
     pub fn forget_resource_install(&mut self, id: &str) {
         self.resource_installs.remove(id);
+        self.disabled_resources.remove(id);
+    }
+
+    /// Returns whether a plugin/resource id is explicitly marked disabled.
+    pub fn is_resource_disabled(&self, id: &str) -> bool {
+        self.disabled_resources.contains(id)
+    }
+
+    /// Updates the disabled marker for a plugin/resource id.
+    pub fn set_resource_disabled(&mut self, id: impl Into<String>, disabled: bool) {
+        let id = id.into();
+        if disabled {
+            self.disabled_resources.insert(id);
+        } else {
+            self.disabled_resources.remove(&id);
+        }
     }
 
     /// Adds or updates a configured marketplace source entry.
@@ -516,6 +535,7 @@ mod tests {
             recent_projects: Vec::new(),
             marketplace_sources: BTreeMap::new(),
             resource_installs: BTreeMap::new(),
+            disabled_resources: BTreeSet::new(),
         };
         fs::write(
             paths.app_config_file(),

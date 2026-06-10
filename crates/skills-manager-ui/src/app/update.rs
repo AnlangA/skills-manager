@@ -14,20 +14,35 @@ use crate::tasks;
 
 /// Top-level application state containing all view state and derived data.
 pub struct App {
+    /// Latest workspace snapshot, if loaded.
     pub snapshot: Option<skills_manager_core::WorkspaceSnapshot>,
+    /// All installed skills across scopes.
     pub skills: Vec<skills_manager_core::InstalledSkill>,
+    /// All managed resources (plugins, MCP servers, marketplaces).
     pub resources: Vec<skills_manager_core::ManagedResource>,
+    /// Precomputed derived state for filtering and search.
     pub derived: DerivedInventoryState,
+    /// Currently active sidebar view.
     pub active_view: ActiveView,
+    /// Inventory/library view state.
     pub inventory: InventoryState,
+    /// MCP management view state.
     pub mcp: McpState,
+    /// Expanded text editor state.
     pub form_editor: ExpandedEditorState,
+    /// Install workflow state.
     pub install: InstallState,
+    /// Skill scaffold creation state.
     pub create: CreateState,
+    /// Catalog export state.
     pub catalog: CatalogExportState,
+    /// Settings and targets view state.
     pub settings: AppSettingsState,
+    /// Status bar message.
     pub status: String,
+    /// Whether an async operation is in progress.
     pub busy: bool,
+    /// Whether the app is running in smoke-test mode.
     pub smoke_test: bool,
 }
 
@@ -37,6 +52,7 @@ impl App {
         Self::init_with_smoke_test(false)
     }
 
+    /// Initializes the application with an optional smoke test flag and loads the workspace.
     pub fn init_with_smoke_test(smoke_test: bool) -> (Self, Task<Message>) {
         let app = Self {
             snapshot: None,
@@ -64,6 +80,7 @@ impl App {
         (app, task)
     }
 
+    /// Returns the currently filtered skills based on active filters and search query.
     pub fn filtered_skills(&self) -> Vec<&skills_manager_core::InstalledSkill> {
         self.derived
             .filtered_skill_indices
@@ -72,6 +89,7 @@ impl App {
             .collect()
     }
 
+    /// Returns the currently selected skill, if any.
     pub fn selected_skill(&self) -> Option<&skills_manager_core::InstalledSkill> {
         self.inventory
             .selected_skill_id
@@ -89,10 +107,12 @@ impl App {
             })
     }
 
+    /// Returns the current aggregate skill counts.
     pub fn counts(&self) -> SkillCounts {
         self.derived.counts
     }
 
+    /// Returns the visible scopes for a given skill based on identity deduplication.
     pub fn visible_scopes_for_skill(
         &self,
         skill: &skills_manager_core::InstalledSkill,
@@ -104,6 +124,7 @@ impl App {
             .unwrap_or_default()
     }
 
+    /// Ensures the selected skill ID is valid, falling back to the first filtered skill.
     pub fn ensure_selection(&mut self) {
         if self
             .inventory
@@ -122,6 +143,7 @@ impl App {
             .map(|skill| skill.id.clone());
     }
 
+    /// Recomputes all derived state (counts, search indices, filtered lists) from current data.
     pub fn rebuild_derived(&mut self) {
         self.derived.counts = counts_from_skills(&self.skills);
         self.derived.visible_scopes_by_id = visible_scopes_by_id(&self.skills);
@@ -150,6 +172,7 @@ impl App {
     }
 }
 
+/// Main update function processing all [`Message`] variants and returning async tasks.
 pub fn update(app: &mut App, message: Message) -> Task<Message> {
     match message {
         Message::Refresh => {
@@ -599,8 +622,8 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             tasks::load_workspace_task(app.settings.project_path.clone())
         }
         Message::SetPluginEnabled(plugin_id, target, enabled) => {
-            app.busy = true;
             app.inventory.pending_remove_plugin = None;
+            set_plugin_enablement(app, &plugin_id, target, enabled);
             app.status = if enabled {
                 "Enabling plugin...".to_string()
             } else {
@@ -614,7 +637,6 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             )
         }
         Message::PluginToggled(result) => {
-            app.busy = false;
             app.status = result.unwrap_or_else(|error| error);
             tasks::load_workspace_task(app.settings.project_path.clone())
         }
@@ -995,8 +1017,50 @@ fn set_expanded_editor_value(app: &mut App, target: ExpandedEditorTarget, value:
     }
 }
 
+fn set_plugin_enablement(
+    app: &mut App,
+    plugin_id: &str,
+    target: skills_manager_core::AgentToolTarget,
+    enabled: bool,
+) {
+    let enablement = if enabled {
+        skills_manager_core::SkillEnablement::Enabled
+    } else {
+        skills_manager_core::SkillEnablement::Disabled
+    };
+
+    for resource in &mut app.resources {
+        if resource_matches_plugin(resource, plugin_id, target) {
+            resource.enablement = enablement;
+        }
+    }
+
+    if let Some(snapshot) = app.snapshot.as_mut() {
+        for resource in &mut snapshot.resources {
+            if resource_matches_plugin(resource, plugin_id, target) {
+                resource.enablement = enablement;
+            }
+        }
+    }
+}
+
+fn resource_matches_plugin(
+    resource: &skills_manager_core::ManagedResource,
+    plugin_id: &str,
+    target: skills_manager_core::AgentToolTarget,
+) -> bool {
+    resource.kind == skills_manager_core::ResourceKind::Plugin
+        && resource.target == target
+        && (resource.id == plugin_id
+            || resource
+                .metadata
+                .get("plugin_id")
+                .is_some_and(|id| id == plugin_id))
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::fs;
     use std::path::PathBuf;
 
@@ -1005,8 +1069,9 @@ mod tests {
     use super::*;
     use crate::app::filters::ScopeFilter;
     use skills_manager_core::{
-        AgentToolTarget, ConflictPolicy, InstallTarget, InstalledSkill, ResourceKind,
-        SkillEnablement, SkillFrontmatter, SkillHealth, SkillScope, WorkspaceSnapshot,
+        AgentToolTarget, ConflictPolicy, InstallTarget, InstalledSkill, ManagedResource,
+        ResourceHealth, ResourceKind, SkillEnablement, SkillFrontmatter, SkillHealth, SkillScope,
+        WorkspaceSnapshot,
     };
 
     #[test]
@@ -1172,6 +1237,25 @@ mod tests {
     }
 
     #[test]
+    fn plugin_toggle_updates_only_matching_plugin_locally() {
+        let (mut app, _) = App::init_with_smoke_test(false);
+        app.busy = false;
+        app.resources = vec![
+            managed_plugin("plugin:codex:first", "first"),
+            managed_plugin("plugin:codex:second", "second"),
+        ];
+
+        let _ = update(
+            &mut app,
+            Message::SetPluginEnabled("first".to_string(), AgentToolTarget::Codex, false),
+        );
+
+        assert!(!app.busy);
+        assert_eq!(app.resources[0].enablement, SkillEnablement::Disabled);
+        assert_eq!(app.resources[1].enablement, SkillEnablement::Enabled);
+    }
+
+    #[test]
     fn install_preview_without_operation_plan_uses_source_parameters() {
         let (mut app, _) = App::init_with_smoke_test(false);
         app.install.preview = Some(PreviewState {
@@ -1214,6 +1298,26 @@ mod tests {
             shadowed_by: None,
             source_url: None,
             installed_at: None,
+        }
+    }
+
+    fn managed_plugin(id: &str, plugin_id: &str) -> ManagedResource {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("plugin_id".to_string(), plugin_id.to_string());
+        ManagedResource {
+            id: id.to_string(),
+            kind: ResourceKind::Plugin,
+            target: AgentToolTarget::Codex,
+            display_name: plugin_id.to_string(),
+            description: None,
+            root_dir: PathBuf::from(format!("/tmp/{plugin_id}")),
+            manifest_file: None,
+            enablement: SkillEnablement::Enabled,
+            health: ResourceHealth::Valid,
+            diagnostics: Vec::new(),
+            source_url: None,
+            installed_at: None,
+            metadata,
         }
     }
 }

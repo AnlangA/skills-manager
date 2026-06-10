@@ -1,7 +1,7 @@
 //! Plugin management view with target-grouped list and inspector panel.
 //!
 //! Renders installed plugins grouped by agent target (Codex, Claude Code,
-//! Generic), with filter and sort controls, enable/disable toggles,
+//! Generic), with filter and sort controls, enablement status,
 //! removal actions, and a detail inspector showing manifest metadata.
 
 use iced::{
@@ -24,6 +24,7 @@ const TARGET_ORDER: [AgentToolTarget; 3] = [
     AgentToolTarget::Generic,
 ];
 
+/// Renders the plugin management view with target-grouped list and inspector.
 pub fn view(app: &App) -> Element<'_, Message> {
     let plugins = filtered_plugins(app);
     let selected = selected_plugin(app, &plugins);
@@ -210,14 +211,18 @@ fn plugin_row<'a>(
     pending: bool,
     busy: bool,
 ) -> Element<'a, Message> {
-    let enabled = plugin.enablement.is_enabled();
-    let toggle = checkbox(enabled)
-        .size(18)
-        .on_toggle_maybe((!busy).then_some({
-            let id = plugin_plugin_id(plugin);
-            let target = plugin.target;
-            move |checked| Message::SetPluginEnabled(id.clone(), target, checked)
-        }));
+    let enablement_control: Element<'_, Message> = if plugin_enablement_is_mutable(plugin.target) {
+        checkbox(plugin.enablement.is_enabled())
+            .size(18)
+            .on_toggle_maybe((!busy).then_some({
+                let id = plugin_plugin_id(plugin);
+                let target = plugin.target;
+                move |checked| Message::SetPluginEnabled(id.clone(), target, checked)
+            }))
+            .into()
+    } else {
+        container(column![]).width(Length::Fixed(18.0)).into()
+    };
     let select = components::small_ghost_button("View", Some(icons::EYE))
         .on_press(Message::SelectResource(plugin.id.clone()));
     let remove = components::confirm_button(
@@ -232,7 +237,7 @@ fn plugin_row<'a>(
 
     container(
         row![
-            toggle,
+            enablement_control,
             column![
                 text(&plugin.display_name).size(FONT_BODY).color(TEXT),
                 text(format!(
@@ -374,19 +379,29 @@ fn actions_section<'a>(
         busy,
     );
 
-    row![
-        components::primary_button(toggle_label, Some(toggle_icon)).on_press_maybe(
-            (!busy).then_some(Message::SetPluginEnabled(
-                plugin_plugin_id(plugin),
-                plugin.target,
-                !plugin.enablement.is_enabled(),
-            ))
-        ),
-        remove,
-    ]
-    .spacing(SPACING_MD)
-    .align_y(Alignment::Center)
-    .into()
+    let mut actions = row![].spacing(SPACING_MD).align_y(Alignment::Center);
+
+    if plugin_enablement_is_mutable(plugin.target) {
+        actions = actions.push(
+            components::primary_button(toggle_label, Some(toggle_icon)).on_press_maybe(
+                (!busy).then_some(Message::SetPluginEnabled(
+                    plugin_plugin_id(plugin),
+                    plugin.target,
+                    !plugin.enablement.is_enabled(),
+                )),
+            ),
+        );
+    }
+
+    actions
+        .push(remove)
+        .spacing(SPACING_MD)
+        .align_y(Alignment::Center)
+        .into()
+}
+
+fn plugin_enablement_is_mutable(target: AgentToolTarget) -> bool {
+    matches!(target, AgentToolTarget::Codex | AgentToolTarget::ClaudeCode)
 }
 
 fn plugin_plugin_id(plugin: &ManagedResource) -> String {

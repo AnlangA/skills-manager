@@ -392,11 +392,13 @@ impl ResourceManager {
             let plugin_id =
                 plugin_resource_id(manifest.target, &manifest.name, marketplace.as_deref());
             let metadata = config.resource_installs.get(&plugin_id);
-            let enablement = match manifest.target {
-                AgentToolTarget::Codex if codex_config.is_plugin_disabled(&display_id) => {
-                    SkillEnablement::Disabled
-                }
-                _ => SkillEnablement::Enabled,
+            let enablement = if config.is_resource_disabled(&plugin_id)
+                || (manifest.target == AgentToolTarget::Codex
+                    && codex_config.is_plugin_disabled(&display_id))
+            {
+                SkillEnablement::Disabled
+            } else {
+                SkillEnablement::Enabled
             };
             let mut diagnostics = manifest.diagnostics.clone();
             if manifest.target == AgentToolTarget::Generic {
@@ -615,14 +617,33 @@ impl ResourceManager {
         match target {
             AgentToolTarget::Codex => {
                 let _lock = ManagerConfig::acquire_update_lock(&self.paths)?;
-                let mut config = CodexConfig::load(&self.paths)?;
-                config.set_plugin_enabled(plugin_id, enabled);
-                config.save()
+                let mut manager_config = ManagerConfig::load(&self.paths)?;
+                let mut codex_config = CodexConfig::load(&self.paths)?;
+                manager_config.set_resource_disabled(
+                    plugin_resource_id_from_display(target, plugin_id),
+                    !enabled,
+                );
+                codex_config.set_plugin_enabled(plugin_id, enabled);
+                manager_config.save(&self.paths)?;
+                codex_config.save()
             }
             AgentToolTarget::ClaudeCode => {
                 let action = if enabled { "enable" } else { "disable" };
-                self.run_claude_plugin_command(action, plugin_id)
-                    .map(|_| ())
+                let resource_id = plugin_resource_id_from_display(target, plugin_id);
+                if !enabled {
+                    ManagerConfig::update(&self.paths, |config| {
+                        config.set_resource_disabled(resource_id.clone(), true);
+                        Ok(())
+                    })?;
+                    self.run_claude_plugin_command(action, plugin_id)
+                        .map(|_| ())
+                } else {
+                    self.run_claude_plugin_command(action, plugin_id)?;
+                    ManagerConfig::update(&self.paths, |config| {
+                        config.set_resource_disabled(resource_id, false);
+                        Ok(())
+                    })
+                }
             }
             AgentToolTarget::Droid
             | AgentToolTarget::OpenCode
@@ -698,6 +719,10 @@ impl ResourceManager {
         let mut manager_config = ManagerConfig::load(&self.paths)?;
         let mut codex_config = CodexConfig::load(&self.paths)?;
         manager_config.record_resource_install(resource_id, request.source_url);
+        manager_config.set_resource_disabled(
+            plugin_resource_id_from_display(AgentToolTarget::Codex, &plugin_id),
+            !request.enable_after_install,
+        );
         codex_config.set_plugin_enabled(&plugin_id, request.enable_after_install);
         manager_config.save(&self.paths)?;
         codex_config.save()?;
@@ -1707,11 +1732,11 @@ fn infer_plugin_marketplace(paths: &ManagerPaths, manifest: &PluginManifest) -> 
 }
 
 fn plugin_resource_id(target: AgentToolTarget, name: &str, marketplace: Option<&str>) -> String {
-    format!(
-        "plugin:{}:{}",
-        target.id_prefix(),
-        plugin_display_id(name, marketplace)
-    )
+    plugin_resource_id_from_display(target, &plugin_display_id(name, marketplace))
+}
+
+fn plugin_resource_id_from_display(target: AgentToolTarget, display_id: &str) -> String {
+    format!("plugin:{}:{display_id}", target.id_prefix())
 }
 
 fn plugin_display_id(name: &str, marketplace: Option<&str>) -> String {
@@ -1883,5 +1908,40 @@ mod tests {
                 .unwrap()
                 .is_plugin_disabled("demo-plugin@local")
         );
+    }
+
+    #[test]
+    fn plugin_scan_uses_manager_disabled_resource_state() {
+        let dir = tempdir().unwrap();
+        let plugin = dir.path().join("home/.claude/plugins/demo-plugin");
+        fs::create_dir_all(plugin.join(".claude-plugin")).unwrap();
+        fs::write(
+            plugin.join(".claude-plugin/plugin.json"),
+            r#"{"name":"demo-plugin","version":"local","description":"Demo plugin"}"#,
+        )
+        .unwrap();
+        let paths = ManagerPaths::with_home(
+            dir.path().join("home"),
+            dir.path().join("data"),
+            dir.path().join("config"),
+            None,
+        );
+
+        ManagerConfig::update(&paths, |config| {
+            config.set_resource_disabled(
+                plugin_resource_id_from_display(AgentToolTarget::ClaudeCode, "demo-plugin"),
+                true,
+            );
+            Ok(())
+        })
+        .unwrap();
+
+        let plugins = ResourceManager::new(paths).scan_plugins().unwrap();
+        let plugin = plugins
+            .iter()
+            .find(|plugin| plugin.target == AgentToolTarget::ClaudeCode)
+            .unwrap();
+
+        assert_eq!(plugin.enablement, SkillEnablement::Disabled);
     }
 }
