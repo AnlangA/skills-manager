@@ -1,3 +1,9 @@
+//! CLI output formatting and serialization.
+//!
+//! Defines [`OutputMode`] for selecting the output format (text, JSON, or
+//! versioned JSON) and [`CommandOutput`] as the tagged union of all command
+//! response payloads.
+
 use std::path::PathBuf;
 
 use clap::ValueEnum;

@@ -1,3 +1,10 @@
+//! Shared domain data types for skills, resources, and target platforms.
+//!
+//! Defines the core enums and structs used across the workspace:
+//! [`SkillScope`], [`SkillEnablement`], [`SkillHealth`], [`SkillDiagnostic`],
+//! [`SkillFrontmatter`], [`InstalledSkill`], [`ResourceKind`],
+//! [`AgentToolTarget`], [`ResourceHealth`], and [`ManagedResource`].
+
 use std::{collections::BTreeMap, fmt, path::PathBuf};
 
 use chrono::{DateTime, Utc};
@@ -81,6 +88,7 @@ impl SkillScope {
     }
 }
 
+/// Enabled/disabled toggle for an installed skill.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum SkillEnablement {
     /// Skill is enabled.
@@ -104,6 +112,7 @@ impl SkillEnablement {
     }
 }
 
+/// Health status of an installed skill reflecting validation results.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum SkillHealth {
     /// No blocking issues.
@@ -133,6 +142,7 @@ impl SkillHealth {
     }
 }
 
+/// Severity level for a skill diagnostic entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum DiagnosticSeverity {
     /// Non-blocking warning.

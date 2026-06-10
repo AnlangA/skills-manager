@@ -14,6 +14,7 @@ use crate::{
     components, icons, theme,
 };
 
+/// Renders the catalog export view with format selection and output display.
 pub fn view(app: &App) -> Element<'_, Message> {
     let exportable = app
         .skills

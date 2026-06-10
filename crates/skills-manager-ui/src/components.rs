@@ -16,16 +16,19 @@ use crate::{
     icons, theme,
 };
 
+/// Creates a styled card container with large padding and the default card theme.
 pub fn card<'a>(content: impl Into<Element<'a, Message>>) -> Container<'a, Message> {
     container(content).padding(SPACING_LG).style(theme::card)
 }
 
+/// Creates a flat card container with medium padding and the flat card theme.
 pub fn flat_card<'a>(content: impl Into<Element<'a, Message>>) -> Container<'a, Message> {
     container(content)
         .padding(SPACING_MD)
         .style(theme::flat_card)
 }
 
+/// Renders an uppercase section label in micro font.
 pub fn section_label<'a>(label: &'a str) -> Element<'a, Message> {
     text(label.to_uppercase())
         .size(FONT_MICRO)
@@ -33,6 +36,7 @@ pub fn section_label<'a>(label: &'a str) -> Element<'a, Message> {
         .into()
 }
 
+/// Renders a section header with a title and metadata label.
 pub fn section_header<'a>(
     title: impl Into<String>,
     meta: impl Into<String>,
@@ -46,6 +50,7 @@ pub fn section_header<'a>(
     .into()
 }
 
+/// Renders a metric display card with a value, label, and accent color.
 pub fn metric<'a>(
     label: impl Into<String>,
     value: impl Into<String>,
@@ -63,6 +68,7 @@ pub fn metric<'a>(
     .style(theme::metric_card)
 }
 
+/// Renders an inline summary stat with a bullet, value, and label.
 pub fn summary_stat<'a>(
     label: impl Into<String>,
     value: impl Into<String>,
@@ -78,6 +84,7 @@ pub fn summary_stat<'a>(
     .into()
 }
 
+/// Wraps content in a titled detail section.
 pub fn detail_section<'a>(
     title: &'a str,
     content: impl Into<Element<'a, Message>>,
@@ -87,6 +94,7 @@ pub fn detail_section<'a>(
         .into()
 }
 
+/// Renders a label-value pair in a vertical column layout.
 pub fn detail_row<'a>(
     label: &'a str,
     value: impl Into<String>,
@@ -101,6 +109,7 @@ pub fn detail_row<'a>(
     .spacing(SPACING_XS)
 }
 
+/// Renders a form field with label, optional helper text, placeholder, and input callback.
 pub fn field<'a, F>(
     label: &'a str,
     helper: &'a str,
@@ -128,6 +137,7 @@ where
     col.into()
 }
 
+/// Renders a form field with an expand button for wide editing.
 pub fn expandable_field<'a, F>(
     label: &'a str,
     helper: &'a str,
@@ -164,6 +174,7 @@ where
     col.into()
 }
 
+/// Renders a compact form field without helper text.
 pub fn compact_field<'a, F>(
     label: &'a str,
     placeholder: &'a str,
@@ -176,6 +187,7 @@ where
     field(label, "", placeholder, value, on_input)
 }
 
+/// Renders a styled dropdown pick list.
 pub fn styled_pick_list<'a, T, F>(
     options: &'a [T],
     selected: Option<T>,
@@ -207,30 +219,35 @@ fn button_content<'a>(
     }
 }
 
+/// Creates a primary action button with optional icon.
 pub fn primary_button<'a>(label: &'a str, icon: Option<&'static str>) -> Button<'a, Message> {
     button(button_content(label, icon, FONT_BODY))
         .padding([SPACING_SM, SPACING_LG])
         .style(theme::primary_button)
 }
 
+/// Creates a secondary action button with optional icon.
 pub fn secondary_button<'a>(label: &'a str, icon: Option<&'static str>) -> Button<'a, Message> {
     button(button_content(label, icon, FONT_BODY))
         .padding([SPACING_SM, SPACING_LG])
         .style(theme::secondary_button)
 }
 
+/// Creates a small ghost button with optional icon.
 pub fn small_ghost_button<'a>(label: &'a str, icon: Option<&'static str>) -> Button<'a, Message> {
     button(button_content(label, icon, FONT_CAPTION))
         .padding([SPACING_XS, SPACING_SM])
         .style(theme::ghost_button)
 }
 
+/// Creates a small danger-styled button with optional icon.
 pub fn small_danger_button<'a>(label: &'a str, icon: Option<&'static str>) -> Button<'a, Message> {
     button(button_content(label, icon, FONT_CAPTION))
         .padding([SPACING_XS, SPACING_SM])
         .style(theme::danger_button)
 }
 
+/// Creates a two-step confirmation button that switches labels between pending and confirm states.
 pub fn confirm_button<'a>(
     pending: bool,
     action_label: &'a str,
@@ -245,6 +262,7 @@ pub fn confirm_button<'a>(
     small_danger_button(label, icon).on_press_maybe((!busy).then_some(msg))
 }
 
+/// Creates a sidebar navigation button with icon and selection state.
 pub fn nav_button<'a>(
     label: &'a str,
     icon: &'static str,
@@ -262,6 +280,7 @@ pub fn nav_button<'a>(
     .on_press(message)
 }
 
+/// Arranges a form and preview panel side-by-side.
 pub fn form_preview_layout<'a>(
     form: impl Into<Element<'a, Message>>,
     preview: impl Into<Element<'a, Message>>,
@@ -279,6 +298,7 @@ pub fn form_preview_layout<'a>(
     .into()
 }
 
+/// Renders a colored dot indicator for skill health status.
 pub fn health_dot<'a>(health: SkillHealth) -> Element<'a, Message> {
     let (label, color) = match health {
         SkillHealth::Valid => ("Valid", SUCCESS),
@@ -295,6 +315,7 @@ pub fn health_dot<'a>(health: SkillHealth) -> Element<'a, Message> {
     .into()
 }
 
+/// Renders a colored chip badge for skill health status.
 pub fn health_chip<'a>(health: SkillHealth) -> Container<'a, Message> {
     let (label, foreground, background) = match health {
         SkillHealth::Valid => ("Valid", SUCCESS, SUCCESS_SOFT),
@@ -305,6 +326,7 @@ pub fn health_chip<'a>(health: SkillHealth) -> Container<'a, Message> {
     chip(label, foreground, background)
 }
 
+/// Renders a colored chip badge for skill enablement status.
 pub fn enablement_chip<'a>(enablement: SkillEnablement) -> Container<'a, Message> {
     match enablement {
         SkillEnablement::Enabled => chip("Enabled", SUCCESS, SUCCESS_SOFT),
@@ -312,6 +334,7 @@ pub fn enablement_chip<'a>(enablement: SkillEnablement) -> Container<'a, Message
     }
 }
 
+/// Renders a colored chip badge for a skill scope.
 pub fn scope_chip<'a>(scope: SkillScope) -> Container<'a, Message> {
     match scope {
         SkillScope::Project => chip("Project", PRIMARY, PRIMARY_SOFT),
@@ -325,6 +348,7 @@ pub fn scope_chip<'a>(scope: SkillScope) -> Container<'a, Message> {
     }
 }
 
+/// Renders an empty state placeholder with title and body text.
 pub fn empty_state<'a>(title: &'a str, body: &'a str) -> Container<'a, Message> {
     flat_card(
         column![
@@ -335,6 +359,7 @@ pub fn empty_state<'a>(title: &'a str, body: &'a str) -> Container<'a, Message> 
     )
 }
 
+/// Builds a scrollable column from an iterator of items with a custom element mapper.
 pub fn list_column<'a, T, F>(
     items: impl IntoIterator<Item = T>,
     spacing: f32,
@@ -348,6 +373,7 @@ where
         .fold(column![].spacing(spacing), |list, item| list.push(f(item)))
 }
 
+/// Renders bulleted text lines from an iterator, with a fallback empty message.
 pub fn bullet_lines<'a, I>(items: I, empty: &'a str) -> Element<'a, Message>
 where
     I: IntoIterator<Item = String>,
@@ -360,6 +386,7 @@ where
     )
 }
 
+/// Renders diagnostic entries as formatted text lines with severity prefixes.
 pub fn diagnostic_lines<'a>(
     diagnostics: &'a [SkillDiagnostic],
     empty: &'a str,
@@ -374,6 +401,7 @@ pub fn diagnostic_lines<'a>(
     )
 }
 
+/// Renders generic text lines with custom color and font size, with a fallback empty message.
 pub fn text_lines<'a, I>(
     lines: I,
     empty: &'a str,

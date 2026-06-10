@@ -31,6 +31,8 @@ pub enum ActiveView {
 }
 
 impl ActiveView {
+    /// Returns the sidebar display label for this view.
+    /// Returns the expanded editor display label.
     pub fn label(self) -> &'static str {
         match self {
             Self::Library => "Skills",
@@ -61,6 +63,7 @@ pub enum UiAgentTarget {
 }
 
 impl UiAgentTarget {
+    /// All selectable agent target variants.
     pub const ALL: [Self; 5] = [
         Self::ClaudeCode,
         Self::Codex,
@@ -138,6 +141,7 @@ pub enum ExpandedEditorTarget {
 }
 
 impl ExpandedEditorTarget {
+    /// Returns `true` if this target belongs to the install workflow.
     pub fn is_install(self) -> bool {
         matches!(
             self,
@@ -155,6 +159,7 @@ impl ExpandedEditorTarget {
         )
     }
 
+    /// Returns `true` if this target belongs to the create workflow.
     pub fn is_create(self) -> bool {
         matches!(
             self,
@@ -193,6 +198,7 @@ impl ExpandedEditorTarget {
         }
     }
 
+    /// Returns the helper text shown below the expanded editor.
     pub fn helper(self) -> &'static str {
         match self {
             Self::InstallSourceUrl => "Repository shorthand, full URL, or tree URL.",
@@ -217,6 +223,7 @@ impl ExpandedEditorTarget {
         }
     }
 
+    /// Returns the placeholder text shown in the expanded editor.
     pub fn placeholder(self) -> &'static str {
         match self {
             Self::InstallSourceUrl => "github.com/owner/repo",
@@ -256,6 +263,7 @@ pub enum InstallSource {
 }
 
 impl InstallSource {
+    /// All selectable install source variants.
     pub const ALL: [Self; 4] = [Self::Url, Self::Local, Self::Downloaded, Self::Catalog];
 }
 
@@ -292,6 +300,7 @@ pub enum UiScope {
 }
 
 impl UiScope {
+    /// All selectable scope variants.
     pub const ALL: [Self; 8] = [
         Self::Global,
         Self::Project,
@@ -331,6 +340,7 @@ pub enum UiConflictPolicy {
 }
 
 impl UiConflictPolicy {
+    /// All selectable conflict policy variants.
     pub const ALL: [Self; 3] = [Self::Block, Self::Rename, Self::Replace];
 }
 
@@ -366,6 +376,7 @@ pub enum UiCatalogFormat {
 }
 
 impl UiCatalogFormat {
+    /// All selectable catalog format variants.
     pub const ALL: [Self; 3] = [Self::Json, Self::Xml, Self::Markdown];
 }
 

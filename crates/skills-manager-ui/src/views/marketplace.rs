@@ -18,6 +18,7 @@ use crate::{
     components, icons, theme,
 };
 
+/// Renders the marketplace view with source management, search, and inspector.
 pub fn view(app: &App) -> Element<'_, Message> {
     let marketplaces = filtered_marketplaces(app);
     let selected = selected_marketplace(app, &marketplaces);

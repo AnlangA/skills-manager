@@ -31,6 +31,7 @@ pub enum ScopeFilter {
 }
 
 impl ScopeFilter {
+    /// All selectable scope filter variants.
     pub const ALL: [Self; 9] = [
         Self::All,
         Self::Project,
@@ -43,6 +44,7 @@ impl ScopeFilter {
         Self::Custom,
     ];
 
+    /// Returns `true` if the given scope passes this filter.
     pub fn matches(self, scope: SkillScope) -> bool {
         match self {
             Self::All => true,
@@ -92,6 +94,7 @@ pub enum HealthFilter {
 }
 
 impl HealthFilter {
+    /// All selectable health filter variants.
     pub const ALL: [Self; 6] = [
         Self::All,
         Self::NeedsAttention,
@@ -101,6 +104,7 @@ impl HealthFilter {
         Self::Shadowed,
     ];
 
+    /// Returns `true` if the given health state passes this filter.
     pub fn matches(self, health: SkillHealth) -> bool {
         match self {
             Self::All => true,
@@ -141,8 +145,10 @@ pub enum SourceFilter {
 }
 
 impl SourceFilter {
+    /// All selectable source filter variants.
     pub const ALL: [Self; 3] = [Self::All, Self::Managed, Self::Unknown];
 
+    /// Returns `true` if the given skill passes this source filter.
     pub fn matches(self, skill: &InstalledSkill) -> bool {
         match self {
             Self::All => true,
@@ -182,6 +188,7 @@ pub enum PluginTargetFilter {
 }
 
 impl PluginTargetFilter {
+    /// All selectable plugin target filter variants.
     pub const ALL: [Self; 7] = [
         Self::All,
         Self::Codex,
@@ -192,6 +199,7 @@ impl PluginTargetFilter {
         Self::Generic,
     ];
 
+    /// Returns `true` if the given agent target passes this filter.
     pub fn matches(self, target: AgentToolTarget) -> bool {
         match self {
             Self::All => true,

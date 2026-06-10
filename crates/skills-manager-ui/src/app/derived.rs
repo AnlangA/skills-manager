@@ -13,6 +13,7 @@ use super::filters::{HealthFilter, PluginTargetFilter, SortKey};
 use super::helpers::{compare_skills, resource_search_haystack, skill_search_haystack};
 use super::state::{ResourceSearchEntry, SkillCounts};
 
+/// Computes aggregate skill counts from a slice of installed skills.
 pub fn counts_from_skills(skills: &[InstalledSkill]) -> SkillCounts {
     skills
         .iter()
@@ -47,6 +48,7 @@ pub fn counts_from_skills(skills: &[InstalledSkill]) -> SkillCounts {
         })
 }
 
+/// Returns indices of skills matching the given search query and filters, using the snapshot index when available.
 pub fn filtered_indices(
     skills: &[InstalledSkill],
     search_query: &str,
@@ -95,6 +97,7 @@ pub fn filtered_indices(
         .collect()
 }
 
+/// Builds a search index from managed resources for fast text-based lookups.
 pub fn resource_search_index(resources: &[ManagedResource]) -> Vec<ResourceSearchEntry> {
     resources
         .iter()
@@ -107,6 +110,7 @@ pub fn resource_search_index(resources: &[ManagedResource]) -> Vec<ResourceSearc
         .collect()
 }
 
+/// Returns filtered and sorted resource indices for plugin-kind entries.
 pub fn filtered_plugin_indices(
     resources: &[ManagedResource],
     search_index: &[ResourceSearchEntry],
@@ -132,6 +136,7 @@ pub fn filtered_plugin_indices(
     indices
 }
 
+/// Returns filtered and sorted resource indices for marketplace-kind entries.
 pub fn filtered_marketplace_indices(
     resources: &[ManagedResource],
     search_index: &[ResourceSearchEntry],
@@ -148,6 +153,7 @@ pub fn filtered_marketplace_indices(
     indices
 }
 
+/// Returns filtered and sorted resource indices for MCP server-kind entries.
 pub fn filtered_mcp_indices(
     resources: &[ManagedResource],
     search_index: &[ResourceSearchEntry],
@@ -196,6 +202,7 @@ fn skill_matches_query(skill: &InstalledSkill, query: &str) -> bool {
     skill_search_haystack(skill).contains(query)
 }
 
+/// Sorts skill indices in place using the given sort key and skill data.
 pub fn sort_skill_indices(indices: &mut [usize], skills: &[InstalledSkill], sort_key: SortKey) {
     indices.sort_by(|left, right| compare_skills(&skills[*left], &skills[*right], sort_key));
 }

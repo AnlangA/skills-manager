@@ -21,6 +21,7 @@ use crate::{
 
 use super::{layout_label, strategy_label};
 
+/// Renders the install workflow view with source selection, target config, and preview.
 pub fn view(app: &App) -> Element<'_, Message> {
     let can_preview = !app.busy
         && match app.install.install_source {

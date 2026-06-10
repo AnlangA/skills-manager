@@ -10,6 +10,7 @@ mod tasks;
 mod theme;
 mod views;
 
+/// Launches the iced desktop application, supporting a `--smoke-test` flag for CI.
 pub fn main() -> iced::Result {
     let smoke_test = std::env::args().any(|arg| arg == "--smoke-test");
     if smoke_test {

@@ -29,6 +29,7 @@ const TOOL_SECTION_ORDER: [SkillScope; 8] = [
     SkillScope::Custom,
 ];
 
+/// Renders the inventory/library view with skill list, filters, and detail inspector.
 pub fn view(app: &App) -> Element<'_, Message> {
     let counts = app.counts();
     let visible = app.filtered_skills();

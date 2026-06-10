@@ -1,3 +1,10 @@
+//! Catalog format, parsing, and export for skill marketplaces.
+//!
+//! Provides [`SkillCatalog`] for loading and representing collections of
+//! skills from JSON catalogs, [`SkillCatalogEntry`] for individual rows,
+//! [`SkillCatalogSource`] for discriminated source descriptors, and
+//! [`CatalogFormat`] for supported export output formats.
+
 use std::{fs, path::Path};
 
 use serde::{Deserialize, Serialize};
@@ -166,8 +173,11 @@ fn escape_markdown_table_cell(value: &str) -> String {
     value.replace('|', "\\|").replace('\n', " ")
 }
 
+/// Legacy alias for [`SkillCatalog`].
 pub type Marketplace = SkillCatalog;
+/// Legacy alias for [`SkillCatalogEntry`].
 pub type MarketplaceEntry = SkillCatalogEntry;
+/// Legacy alias for [`SkillCatalogSource`].
 pub type MarketplaceSource = SkillCatalogSource;
 
 #[cfg(test)]

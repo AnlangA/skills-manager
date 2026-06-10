@@ -13,6 +13,7 @@ use skills_manager_core::{DoctorReport, TargetDoctorReport, format_bytes};
 use crate::theme::*;
 use crate::{app::App, app::Message, components, icons};
 
+/// Renders the targets and settings view with path config and doctor report.
 pub fn view(app: &App) -> Element<'_, Message> {
     components::card(scrollable(
         column![

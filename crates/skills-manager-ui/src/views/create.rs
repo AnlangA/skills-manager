@@ -18,6 +18,7 @@ use crate::{
 
 use super::strategy_label;
 
+/// Renders the skill scaffold creation form with live preview panel.
 pub fn view(app: &App) -> Element<'_, Message> {
     let can_preview = !app.busy
         && !app.create.name.trim().is_empty()

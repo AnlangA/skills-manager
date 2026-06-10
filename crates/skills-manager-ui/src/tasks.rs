@@ -27,6 +27,7 @@ use crate::app::{
     PreviewState, catalog_entry_from_source,
 };
 
+/// Loads the full workspace snapshot as a background task.
 pub fn load_workspace_task(project_path: String) -> Task<Message> {
     Task::perform(
         async move {
@@ -37,6 +38,7 @@ pub fn load_workspace_task(project_path: String) -> Task<Message> {
     )
 }
 
+/// Saves the default download path to the manager config as a background task.
 pub fn save_default_download_path_task(project_path: String, value: String) -> Task<Message> {
     Task::perform(
         async move {
@@ -61,6 +63,7 @@ pub fn save_default_download_path_task(project_path: String, value: String) -> T
     )
 }
 
+/// Downloads skills from a GitHub URL into the cache as a background task.
 pub fn download_source_task(
     project_path: String,
     url: String,
@@ -99,6 +102,7 @@ pub fn download_source_task(
     )
 }
 
+/// Builds an install preview from the given source and target as a background task.
 pub fn preview_task(
     project_path: String,
     source: InstallSource,
@@ -204,6 +208,7 @@ pub fn preview_task(
     )
 }
 
+/// Installs skills from the given source and target as a background task.
 pub fn install_source_task(
     project_path: String,
     source: InstallSource,
@@ -267,6 +272,7 @@ pub fn install_source_task(
     )
 }
 
+/// Applies a pre-built operation plan as a background task.
 pub fn install_task(project_path: String, plan: OperationPlan) -> Task<Message> {
     Task::perform(
         async move {
@@ -282,6 +288,7 @@ pub fn install_task(project_path: String, plan: OperationPlan) -> Task<Message> 
     )
 }
 
+/// Removes a cached download directory as a background task.
 pub fn remove_download_task(project_path: String, root_dir: PathBuf) -> Task<Message> {
     Task::perform(
         async move {
@@ -297,6 +304,7 @@ pub fn remove_download_task(project_path: String, root_dir: PathBuf) -> Task<Mes
     )
 }
 
+/// Downloads and parses a catalog from a GitHub URL as a background task.
 pub fn load_catalog_task(url: String) -> Task<Message> {
     Task::perform(
         async move {
@@ -322,6 +330,7 @@ pub fn load_catalog_task(url: String) -> Task<Message> {
     )
 }
 
+/// Generates a catalog export from installed skills as a background task.
 pub fn generate_catalog_task(project_path: String, format: CatalogFormat) -> Task<Message> {
     Task::perform(
         async move {
@@ -334,6 +343,7 @@ pub fn generate_catalog_task(project_path: String, format: CatalogFormat) -> Tas
     )
 }
 
+/// Saves a generated catalog export to disk as a background task.
 pub fn save_catalog_task(project_path: String, save_path: String, output: String) -> Task<Message> {
     Task::perform(
         async move {
@@ -348,6 +358,7 @@ pub fn save_catalog_task(project_path: String, save_path: String, output: String
     )
 }
 
+/// Toggles a skill's enabled/disabled state as a background task.
 pub fn toggle_task(project_path: String, skill_root: PathBuf, disabled: bool) -> Task<Message> {
     Task::perform(
         async move {
@@ -367,6 +378,7 @@ pub fn toggle_task(project_path: String, skill_root: PathBuf, disabled: bool) ->
     )
 }
 
+/// Removes an installed skill as a background task.
 pub fn remove_task(project_path: String, skill_root: PathBuf) -> Task<Message> {
     Task::perform(
         async move {
@@ -381,6 +393,7 @@ pub fn remove_task(project_path: String, skill_root: PathBuf) -> Task<Message> {
     )
 }
 
+/// Toggles a plugin's enabled/disabled state as a background task.
 pub fn toggle_plugin_task(
     project_path: String,
     plugin_id: String,
@@ -404,6 +417,7 @@ pub fn toggle_plugin_task(
     )
 }
 
+/// Removes an installed plugin as a background task.
 pub fn remove_plugin_task(
     project_path: String,
     plugin_id: String,
@@ -422,6 +436,7 @@ pub fn remove_plugin_task(
     )
 }
 
+/// Adds or replaces an MCP server entry as a background task.
 pub fn add_mcp_server_task(project_path: String, request: McpServerRequest) -> Task<Message> {
     Task::perform(
         async move {
@@ -437,6 +452,7 @@ pub fn add_mcp_server_task(project_path: String, request: McpServerRequest) -> T
     )
 }
 
+/// Toggles an MCP server's enabled/disabled state as a background task.
 pub fn toggle_mcp_server_task(
     project_path: String,
     name: String,
@@ -458,6 +474,7 @@ pub fn toggle_mcp_server_task(
     )
 }
 
+/// Removes an MCP server entry as a background task.
 pub fn remove_mcp_server_task(
     project_path: String,
     name: String,
@@ -474,6 +491,7 @@ pub fn remove_mcp_server_task(
     )
 }
 
+/// Previews a skill scaffold creation as a background task.
 pub fn preview_scaffold_task(project_path: String, request: SkillScaffoldRequest) -> Task<Message> {
     Task::perform(
         async move {
@@ -484,6 +502,7 @@ pub fn preview_scaffold_task(project_path: String, request: SkillScaffoldRequest
     )
 }
 
+/// Creates a skill scaffold on disk as a background task.
 pub fn create_scaffold_task(project_path: String, request: SkillScaffoldRequest) -> Task<Message> {
     Task::perform(
         async move {
@@ -547,6 +566,7 @@ fn preview_state(
     }
 }
 
+/// Converts a downloaded skill entry into a UI display state.
 pub fn downloaded_entry_state(entry: DownloadedSkillEntry) -> DownloadedEntryState {
     let summary = entry.resource_summary();
     DownloadedEntryState {

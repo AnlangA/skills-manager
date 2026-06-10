@@ -1,3 +1,11 @@
+//! Install planning and execution for skills across target scopes.
+//!
+//! Provides the [`Installer`] service for previewing, planning, and applying
+//! skill installations, as well as removing or toggling installed skills.
+//! Supporting types include [`ConflictPolicy`], [`InstallTarget`],
+//! [`InstallRequest`], [`InstallCandidate`], [`InstallPreview`], and
+//! [`InstallResult`].
+
 use std::{
     collections::HashMap,
     fs,

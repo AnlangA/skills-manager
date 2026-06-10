@@ -25,6 +25,7 @@ const TARGET_ORDER: [AgentToolTarget; 5] = [
     AgentToolTarget::Zed,
 ];
 
+/// Renders the MCP server management view with grouped list and inspector.
 pub fn view(app: &App) -> Element<'_, Message> {
     let servers = filtered_mcp_servers(app);
     let selected = selected_mcp_server(app, &servers);

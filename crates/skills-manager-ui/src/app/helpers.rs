@@ -15,10 +15,12 @@ use skills_manager_core::{
 use super::state::{CatalogEntryState, CreateState, InstallState, McpState};
 use super::types::{InstallSource, resolve_install_target};
 
+/// Resolves the current install target from the install form state.
 pub fn current_install_target(install: &InstallState) -> Result<InstallTarget, String> {
     resolve_install_target(install.install_scope, &install.custom_install_path)
 }
 
+/// Returns the active source value (URL, local path, download root, or catalog URL) from the install form.
 pub fn current_source_value(install: &InstallState) -> String {
     match install.install_source {
         InstallSource::Url => install.source_url.trim().to_string(),
@@ -32,6 +34,7 @@ pub fn current_source_value(install: &InstallState) -> String {
     }
 }
 
+/// Builds a scaffold request from the create form state, validating required fields.
 pub fn current_scaffold_request(create: &CreateState) -> Result<SkillScaffoldRequest, String> {
     if create.name.trim().is_empty() {
         return Err("Enter a skill name first.".to_string());
@@ -53,6 +56,7 @@ pub fn current_scaffold_request(create: &CreateState) -> Result<SkillScaffoldReq
     })
 }
 
+/// Builds an MCP server request from the MCP form state, validating required fields.
 pub fn current_mcp_request(mcp: &McpState) -> Result<McpServerRequest, String> {
     if mcp.name.trim().is_empty() {
         return Err("Enter an MCP server name first.".to_string());
@@ -86,6 +90,7 @@ pub fn current_mcp_request(mcp: &McpState) -> Result<McpServerRequest, String> {
     })
 }
 
+/// Splits a comma-separated string into trimmed, non-empty tokens.
 pub fn split_csv(value: &str) -> Vec<String> {
     value
         .split(',')
@@ -95,6 +100,7 @@ pub fn split_csv(value: &str) -> Vec<String> {
         .collect()
 }
 
+/// Splits a whitespace-separated string into trimmed, non-empty tokens.
 pub fn split_args(value: &str) -> Vec<String> {
     value
         .split_whitespace()
@@ -104,6 +110,7 @@ pub fn split_args(value: &str) -> Vec<String> {
         .collect()
 }
 
+/// Parses comma- or newline-separated `KEY=VALUE` pairs into a sorted map.
 pub fn split_key_values(value: &str) -> Result<BTreeMap<String, String>, String> {
     let mut map = BTreeMap::new();
     for raw in value.split([',', '\n']) {
@@ -123,11 +130,13 @@ pub fn split_key_values(value: &str) -> Result<BTreeMap<String, String>, String>
     Ok(map)
 }
 
+/// Returns `Some(trimmed)` for non-empty strings, `None` otherwise.
 pub fn optional_string(value: &str) -> Option<String> {
     let trimmed = value.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
+/// Converts a catalog source entry into a UI-ready catalog entry state with install metadata.
 pub fn catalog_entry_from_source(
     name: String,
     description: String,
@@ -175,6 +184,7 @@ pub fn catalog_entry_from_source(
     }
 }
 
+/// Builds a lowercase search haystack from a skill's display name, description, path, tools, and tags.
 pub fn skill_search_haystack(skill: &InstalledSkill) -> String {
     let mut haystack = String::new();
     haystack.push_str(&skill.display_name);
@@ -189,6 +199,7 @@ pub fn skill_search_haystack(skill: &InstalledSkill) -> String {
     haystack.to_lowercase()
 }
 
+/// Builds a lowercase search haystack from a managed resource's kind, target, name, description, and metadata.
 pub fn resource_search_haystack(resource: &ManagedResource) -> String {
     let mut haystack = String::new();
     haystack.push_str(resource.kind.label());
@@ -220,6 +231,7 @@ pub fn resource_search_haystack(resource: &ManagedResource) -> String {
     haystack.to_lowercase()
 }
 
+/// Maps each skill to its visible scopes (sorted, deduplicated) by identity key.
 pub fn visible_scopes_by_id(
     skills: &[InstalledSkill],
 ) -> std::collections::BTreeMap<String, Vec<SkillScope>> {
@@ -249,6 +261,7 @@ pub fn visible_scopes_by_id(
         .collect()
 }
 
+/// Compares two installed skills by the given sort key for stable ordering.
 pub fn compare_skills(
     left: &InstalledSkill,
     right: &InstalledSkill,

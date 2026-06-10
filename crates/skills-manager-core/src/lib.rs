@@ -8,23 +8,40 @@
 //! - `download`, `marketplace`: remote catalog and cache ingestion.
 //! - `resource`, `target`, `target_registry`: target profiles and additional resource types.
 //! - `snapshot`, `manager_config`: workspace view and persistent state serialization.
+/// Codex config toggle management for `~/.codex/config.toml`.
 pub mod codex_config;
+/// Remote GitHub download, cache, and catalog ingestion helpers.
 pub mod download;
+/// Error primitives and result type alias.
 pub mod error;
 mod fs_ops;
+/// GitHub URL parsing and archive URL construction utilities.
 pub mod github;
+/// Install planning and execution for skills across target scopes.
 pub mod install;
+/// Persistent application configuration schema.
 pub mod manager_config;
+/// Catalog format, parsing, and export for skill marketplaces.
 pub mod marketplace;
+/// MCP server discovery and configuration helpers.
 pub mod mcp;
+/// Shared domain data types for skills, resources, and target platforms.
 pub mod model;
+/// Installation operation journaling and rollback support.
 pub mod operation;
+/// Filesystem location helpers for project roots and global manager paths.
 pub mod paths;
+/// Plugin/resource indexing and marketplace management.
 pub mod resource;
+/// Scaffold generation helpers for creating new skills.
 pub mod scaffold;
+/// Skill discovery, frontmatter parsing, validation, and indexing.
 pub mod skill;
+/// Workspace snapshot aggregation for status and dashboard views.
 pub mod snapshot;
+/// Target profiles, diagnostics, and repair actions for managed scopes.
 pub mod target;
+/// Registry wrapper around all available install targets.
 pub mod target_registry;
 
 /// Download, cache, and catalog helpers for remote GitHub skill sources.

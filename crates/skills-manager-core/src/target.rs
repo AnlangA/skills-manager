@@ -92,6 +92,7 @@ pub struct TargetHealthCounts {
     pub shadowed: usize,
 }
 
+/// Proposed repair action with a human-readable label and description.
 #[derive(Debug, Clone, Serialize)]
 pub struct DoctorRepairAction {
     /// Short label in reports.
@@ -100,6 +101,7 @@ pub struct DoctorRepairAction {
     pub description: String,
 }
 
+/// Per-target doctor report containing profile, counts, diagnostics, and proposed repairs.
 #[derive(Debug, Clone, Serialize)]
 pub struct TargetDoctorReport {
     /// Target profile.
@@ -114,6 +116,7 @@ pub struct TargetDoctorReport {
     pub repair_actions: Vec<DoctorRepairAction>,
 }
 
+/// Aggregate summary of a doctor run across all targets.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct DoctorSummary {
     /// Number of inspected targets.
@@ -141,6 +144,7 @@ pub struct DoctorReport {
     pub targets: Vec<TargetDoctorReport>,
 }
 
+/// Outcome of a single repair action, including whether it was applied.
 #[derive(Debug, Clone, Serialize)]
 pub struct RepairOutcome {
     /// Repair action label.

@@ -1,3 +1,10 @@
+//! Filesystem location helpers for project roots and global manager paths.
+//!
+//! Provides [`ProjectRoot`] for resolving `.agents/skills` and related
+//! directories inside a project, and [`ManagerPaths`] for locating
+//! per-platform config, download, and skill directories across all
+//! supported agent tool scopes.
+
 use std::{
     env,
     path::{Component, Path, PathBuf},
